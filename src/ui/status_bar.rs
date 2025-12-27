@@ -17,6 +17,7 @@ pub fn draw(
     untracked_count: usize,
 ) {
     let line = Line::from(vec![
+        Span::raw(" "),
         Span::styled(branch.to_string(), Style::default().fg(colors::CYAN)),
         Span::raw(" "),
         Span::styled("S:", Style::default().fg(colors::TEXT)),

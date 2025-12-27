@@ -51,6 +51,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.untracked_count,
     );
 
+    app.file_list_area = chunks[1];
+    app.diff_area = chunks[2];
+
     file_list::draw(
         frame,
         chunks[1],

@@ -4,12 +4,15 @@ use crate::ui;
 use crate::watcher::{FileWatcher, WatcherEvent};
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use git2::Repository;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use std::io;
 use std::path::Path;
 use std::sync::mpsc::TryRecvError;
@@ -38,6 +41,9 @@ pub struct App {
     visible_rows: Vec<VisibleRow>,
 
     pub(crate) file_list_height: usize,
+
+    pub(crate) file_list_area: Rect,
+    pub(crate) diff_area: Rect,
 }
 
 impl App {
@@ -78,6 +84,8 @@ impl App {
             branch,
             visible_rows,
             file_list_height: 0,
+            file_list_area: Rect::default(),
+            diff_area: Rect::default(),
         })
     }
 
@@ -212,6 +220,39 @@ impl App {
         };
         self.scroll_diff(delta, viewport_height, viewport_width);
     }
+
+    fn click_file_list(&mut self, row: u16) {
+        let inner_row = row.saturating_sub(self.file_list_area.y + 1) as usize;
+        let visual_row = self.file_list_scroll + inner_row;
+
+        let staged_count = self.staged_files.len();
+        let unstaged_count = self.unstaged_files.len();
+
+        let file_index = if staged_count > 0 && unstaged_count > 0 {
+            let staged_header = 0;
+            let unstaged_header = 1 + staged_count;
+
+            if visual_row == staged_header || visual_row == unstaged_header {
+                return;
+            } else if visual_row < unstaged_header {
+                visual_row - 1
+            } else {
+                visual_row - 2
+            }
+        } else if staged_count > 0 || unstaged_count > 0 {
+            if visual_row == 0 {
+                return;
+            }
+            visual_row - 1
+        } else {
+            return;
+        };
+
+        if file_index < self.visible_rows.len() {
+            self.highlight_index = Some(file_index);
+            self.select_current();
+        }
+    }
 }
 
 fn build_visible_rows(staged: &[FileEntry], unstaged: &[FileEntry]) -> Vec<VisibleRow> {
@@ -276,28 +317,63 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
         };
 
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
-                        KeyCode::Down => app.move_highlight(1),
-                        KeyCode::Up => app.move_highlight(-1),
-                        KeyCode::Char(' ') | KeyCode::Enter => app.select_current(),
-                        KeyCode::PageDown => {
-                            let size = terminal.size()?;
-                            let height = size.height.saturating_sub(10) as usize;
-                            let width = size.width.saturating_sub(2) as usize;
-                            app.page_scroll_diff(true, height, width);
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => break,
+                            KeyCode::Down => app.move_highlight(1),
+                            KeyCode::Up => app.move_highlight(-1),
+                            KeyCode::Char(' ') | KeyCode::Enter => app.select_current(),
+                            KeyCode::PageDown => {
+                                let size = terminal.size()?;
+                                let height = size.height.saturating_sub(10) as usize;
+                                let width = size.width.saturating_sub(2) as usize;
+                                app.page_scroll_diff(true, height, width);
+                            }
+                            KeyCode::PageUp => {
+                                let size = terminal.size()?;
+                                let height = size.height.saturating_sub(10) as usize;
+                                let width = size.width.saturating_sub(2) as usize;
+                                app.page_scroll_diff(false, height, width);
+                            }
+                            _ => {}
                         }
-                        KeyCode::PageUp => {
-                            let size = terminal.size()?;
-                            let height = size.height.saturating_sub(10) as usize;
-                            let width = size.width.saturating_sub(2) as usize;
-                            app.page_scroll_diff(false, height, width);
+                    }
+                }
+                Event::Mouse(mouse) => {
+                    let (col, row) = (mouse.column, mouse.row);
+                    let in_file_list = app.file_list_area.contains((col, row).into());
+                    let in_diff = app.diff_area.contains((col, row).into());
+
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            if in_file_list {
+                                app.move_highlight(3);
+                            } else if in_diff {
+                                let height = app.diff_area.height.saturating_sub(2) as usize;
+                                let width = app.diff_area.width.saturating_sub(2) as usize;
+                                app.scroll_diff(3, height, width);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            if in_file_list {
+                                app.move_highlight(-3);
+                            } else if in_diff {
+                                let height = app.diff_area.height.saturating_sub(2) as usize;
+                                let width = app.diff_area.width.saturating_sub(2) as usize;
+                                app.scroll_diff(-3, height, width);
+                            }
+                        }
+                        MouseEventKind::Down(event::MouseButton::Left) => {
+                            if in_file_list {
+                                app.click_file_list(row);
+                            }
                         }
                         _ => {}
                     }
                 }
+                _ => {}
             }
         }
 
