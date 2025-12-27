@@ -98,10 +98,7 @@ fn create_file_item(
 
     let counts = format_line_counts(file.added_lines, file.deleted_lines, file.is_binary);
 
-    let indent_level = compute_indent(&file.path);
-    let indent = "  ".repeat(indent_level.min(4));
-
-    let fixed_width = prefix.len() + 2 + indent.len() + counts.len() + 2;
+    let fixed_width = prefix.len() + 2 + counts.len() + 2;
     let available_width = (width as usize).saturating_sub(fixed_width);
 
     let (path_display, show_counts) =
@@ -117,7 +114,6 @@ fn create_file_item(
         Span::styled(prefix, base_style.fg(colors::TEXT)),
         Span::styled(status_symbol, base_style.fg(status_color)),
         Span::styled(" ", base_style),
-        Span::styled(indent.clone(), base_style),
         Span::styled(path_display, base_style.fg(colors::TEXT)),
     ];
 
@@ -129,10 +125,6 @@ fn create_file_item(
     }
 
     ListItem::new(Line::from(spans))
-}
-
-fn compute_indent(path: &str) -> usize {
-    path.matches('/').count()
 }
 
 fn format_path_with_priority(path: &str, counts: &str, available_width: usize) -> (String, bool) {
@@ -220,14 +212,6 @@ pub fn calculate_height(staged_count: usize, unstaged_count: usize, max_height: 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_compute_indent() {
-        assert_eq!(compute_indent("file.txt"), 0);
-        assert_eq!(compute_indent("src/file.txt"), 1);
-        assert_eq!(compute_indent("src/ui/file.txt"), 2);
-        assert_eq!(compute_indent("a/b/c/d/e.txt"), 4);
-    }
 
     #[test]
     fn test_format_line_counts() {

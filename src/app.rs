@@ -197,19 +197,20 @@ impl App {
         headers
     }
 
-    fn scroll_diff(&mut self, delta: isize, viewport_height: usize) {
-        let max_scroll = crate::ui::diff_panel::max_scroll(&self.current_diff, viewport_height);
+    fn scroll_diff(&mut self, delta: isize, viewport_height: usize, viewport_width: usize) {
+        let max_scroll =
+            crate::ui::diff_panel::max_scroll(&self.current_diff, viewport_height, viewport_width);
         let current = self.diff_scroll as isize;
         self.diff_scroll = (current + delta).clamp(0, max_scroll as isize) as usize;
     }
 
-    fn page_scroll_diff(&mut self, down: bool, viewport_height: usize) {
+    fn page_scroll_diff(&mut self, down: bool, viewport_height: usize, viewport_width: usize) {
         let delta = if down {
             viewport_height as isize
         } else {
             -(viewport_height as isize)
         };
-        self.scroll_diff(delta, viewport_height);
+        self.scroll_diff(delta, viewport_height, viewport_width);
     }
 }
 
@@ -283,12 +284,16 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                         KeyCode::Up => app.move_highlight(-1),
                         KeyCode::Char(' ') | KeyCode::Enter => app.select_current(),
                         KeyCode::PageDown => {
-                            let height = terminal.size()?.height.saturating_sub(10) as usize;
-                            app.page_scroll_diff(true, height);
+                            let size = terminal.size()?;
+                            let height = size.height.saturating_sub(10) as usize;
+                            let width = size.width.saturating_sub(2) as usize;
+                            app.page_scroll_diff(true, height, width);
                         }
                         KeyCode::PageUp => {
-                            let height = terminal.size()?.height.saturating_sub(10) as usize;
-                            app.page_scroll_diff(false, height);
+                            let size = terminal.size()?;
+                            let height = size.height.saturating_sub(10) as usize;
+                            let width = size.width.saturating_sub(2) as usize;
+                            app.page_scroll_diff(false, height, width);
                         }
                         _ => {}
                     }

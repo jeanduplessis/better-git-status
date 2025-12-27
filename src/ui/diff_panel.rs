@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -78,23 +78,25 @@ pub fn draw(frame: &mut Frame, area: Rect, diff: &DiffContent, scroll: usize) {
                 .border_style(Style::default().fg(colors::OVERLAY))
                 .title("Diff"),
         )
-        .wrap(Wrap { trim: false })
         .scroll((scroll_offset as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn render_diff_lines(diff_lines: &[DiffLine], _width: usize) -> Vec<Line<'static>> {
+fn render_diff_lines(diff_lines: &[DiffLine], width: usize) -> Vec<Line<'static>> {
     let max_line_num = diff_lines
         .iter()
         .filter_map(|l| l.new_line_number)
         .max()
         .unwrap_or(0);
     let line_num_width = max_line_num.to_string().len().max(3);
+    let gutter_width = line_num_width + 3; // " │" + prefix char
+
+    let content_width = width.saturating_sub(gutter_width);
 
     diff_lines
         .iter()
-        .map(|line| {
+        .flat_map(|line| {
             let (line_num_str, content_style) = match line.kind {
                 DiffLineKind::Header => (
                     format!("{:>width$} │", "", width = line_num_width),
@@ -137,19 +139,56 @@ fn render_diff_lines(diff_lines: &[DiffLine], _width: usize) -> Vec<Line<'static
                 _ => "",
             };
 
-            Line::from(vec![
-                Span::styled(line_num_str, Style::default().fg(colors::GRAY)),
-                Span::styled(prefix, content_style),
-                Span::styled(line.content.clone(), content_style),
-            ])
+            let content = &line.content;
+            let continuation_gutter = format!("{:>width$} │ ", "", width = line_num_width);
+
+            if content_width == 0 || content.is_empty() {
+                return vec![Line::from(vec![
+                    Span::styled(line_num_str, Style::default().fg(colors::GRAY)),
+                    Span::styled(prefix, content_style),
+                    Span::styled(content.clone(), content_style),
+                ])];
+            }
+
+            let mut result_lines = Vec::new();
+            let mut chars: Vec<char> = content.chars().collect();
+            let mut first = true;
+
+            while !chars.is_empty() {
+                let take = if first {
+                    content_width.saturating_sub(1) // account for prefix
+                } else {
+                    content_width
+                };
+                let chunk: String = chars.drain(..take.min(chars.len())).collect();
+
+                if first {
+                    result_lines.push(Line::from(vec![
+                        Span::styled(line_num_str.clone(), Style::default().fg(colors::GRAY)),
+                        Span::styled(prefix, content_style),
+                        Span::styled(chunk, content_style),
+                    ]));
+                    first = false;
+                } else {
+                    result_lines.push(Line::from(vec![
+                        Span::styled(continuation_gutter.clone(), Style::default().fg(colors::GRAY)),
+                        Span::styled(chunk, content_style),
+                    ]));
+                }
+            }
+
+            result_lines
         })
         .collect()
 }
 
 /// Calculate the maximum scroll offset for the diff content.
-pub fn max_scroll(diff: &DiffContent, viewport_height: usize) -> usize {
+pub fn max_scroll(diff: &DiffContent, viewport_height: usize, viewport_width: usize) -> usize {
     let total = match diff {
-        DiffContent::Text(lines) => lines.len(),
+        DiffContent::Text(lines) => {
+            let rendered = render_diff_lines(lines, viewport_width);
+            rendered.len()
+        }
         _ => 0,
     };
     total.saturating_sub(viewport_height)
@@ -161,11 +200,11 @@ mod tests {
 
     #[test]
     fn test_max_scroll_empty() {
-        assert_eq!(max_scroll(&DiffContent::Empty, 10), 0);
-        assert_eq!(max_scroll(&DiffContent::Clean, 10), 0);
-        assert_eq!(max_scroll(&DiffContent::Binary, 10), 0);
-        assert_eq!(max_scroll(&DiffContent::InvalidUtf8, 10), 0);
-        assert_eq!(max_scroll(&DiffContent::Conflict, 10), 0);
+        assert_eq!(max_scroll(&DiffContent::Empty, 10, 80), 0);
+        assert_eq!(max_scroll(&DiffContent::Clean, 10, 80), 0);
+        assert_eq!(max_scroll(&DiffContent::Binary, 10, 80), 0);
+        assert_eq!(max_scroll(&DiffContent::InvalidUtf8, 10, 80), 0);
+        assert_eq!(max_scroll(&DiffContent::Conflict, 10, 80), 0);
     }
 
     #[test]
@@ -180,13 +219,13 @@ mod tests {
 
         let diff = DiffContent::Text(lines);
 
-        // 20 lines, viewport 10: can scroll 10
-        assert_eq!(max_scroll(&diff, 10), 10);
+        // 20 lines, viewport 10, wide enough: can scroll 10
+        assert_eq!(max_scroll(&diff, 10, 80), 10);
 
         // 20 lines, viewport 20: no scroll
-        assert_eq!(max_scroll(&diff, 20), 0);
+        assert_eq!(max_scroll(&diff, 20, 80), 0);
 
         // 20 lines, viewport 30: no scroll
-        assert_eq!(max_scroll(&diff, 30), 0);
+        assert_eq!(max_scroll(&diff, 30, 80), 0);
     }
 }

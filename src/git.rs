@@ -84,12 +84,13 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
         if is_untracked {
             untracked_files.insert(path.clone());
             unstaged_paths.insert(path.clone());
+            let (added, is_binary) = count_lines_in_workdir(repo, &path);
             let entry = FileEntry {
                 path,
                 status: FileStatus::Untracked,
-                added_lines: None,
-                deleted_lines: None,
-                is_binary: false,
+                added_lines: Some(added),
+                deleted_lines: Some(0),
+                is_binary,
                 is_submodule: false,
             };
             unstaged_files.push(entry);
@@ -195,6 +196,30 @@ fn get_unstaged_status(status: Status) -> FileStatus {
     } else {
         FileStatus::Modified
     }
+}
+
+fn count_lines_in_workdir(repo: &Repository, path: &str) -> (usize, bool) {
+    let workdir = match repo.workdir() {
+        Some(w) => w,
+        None => return (0, false),
+    };
+    let file_path = workdir.join(path);
+    let content = match std::fs::read(&file_path) {
+        Ok(c) => c,
+        Err(_) => return (0, false),
+    };
+
+    if content.contains(&0) {
+        return (0, true);
+    }
+
+    let text = match String::from_utf8(content) {
+        Ok(t) => t,
+        Err(_) => return (0, false),
+    };
+
+    let line_count = text.lines().count();
+    (line_count, false)
 }
 
 fn get_line_counts_for_section(
