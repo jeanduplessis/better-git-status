@@ -146,10 +146,47 @@ fn render_diff_lines(diff_lines: &[DiffLine], _width: usize) -> Vec<Line<'static
         .collect()
 }
 
+/// Calculate the maximum scroll offset for the diff content.
 pub fn max_scroll(diff: &DiffContent, viewport_height: usize) -> usize {
     let total = match diff {
         DiffContent::Text(lines) => lines.len(),
         _ => 0,
     };
     total.saturating_sub(viewport_height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_max_scroll_empty() {
+        assert_eq!(max_scroll(&DiffContent::Empty, 10), 0);
+        assert_eq!(max_scroll(&DiffContent::Clean, 10), 0);
+        assert_eq!(max_scroll(&DiffContent::Binary, 10), 0);
+        assert_eq!(max_scroll(&DiffContent::InvalidUtf8, 10), 0);
+        assert_eq!(max_scroll(&DiffContent::Conflict, 10), 0);
+    }
+
+    #[test]
+    fn test_max_scroll_text() {
+        let lines: Vec<DiffLine> = (0..20)
+            .map(|i| DiffLine {
+                kind: DiffLineKind::Context,
+                content: format!("line {}", i),
+                new_line_number: Some(i + 1),
+            })
+            .collect();
+
+        let diff = DiffContent::Text(lines);
+
+        // 20 lines, viewport 10: can scroll 10
+        assert_eq!(max_scroll(&diff, 10), 10);
+
+        // 20 lines, viewport 20: no scroll
+        assert_eq!(max_scroll(&diff, 20), 0);
+
+        // 20 lines, viewport 30: no scroll
+        assert_eq!(max_scroll(&diff, 30), 0);
+    }
 }

@@ -21,8 +21,9 @@ pub fn get_branch_info(repo: &Repository) -> BranchInfo {
             }
         }
         if let Some(oid) = head.target() {
-            let short = &oid.to_string()[..7.min(oid.to_string().len())];
-            return BranchInfo::Detached(short.to_string());
+            let oid_str = oid.to_string();
+            let len = 7.min(oid_str.len());
+            return BranchInfo::Detached(oid_str[..len].to_string());
         }
     }
     BranchInfo::Detached("unknown".to_string())
@@ -53,7 +54,10 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
     let mut untracked_files = HashSet::new();
 
     for entry in statuses.iter() {
-        let path = entry.path().unwrap_or("").to_string();
+        let Some(raw_path) = entry.path() else {
+            continue;
+        };
+        let path = raw_path.to_string();
         let status = entry.status();
 
         let is_conflict = status.is_conflicted();

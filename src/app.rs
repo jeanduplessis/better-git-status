@@ -15,29 +15,29 @@ use std::path::Path;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
+/// Application state for the interactive git status TUI.
 pub struct App {
     repo: Repository,
-    repo_path: String,
 
-    pub staged_files: Vec<FileEntry>,
-    pub unstaged_files: Vec<FileEntry>,
+    pub(crate) staged_files: Vec<FileEntry>,
+    pub(crate) unstaged_files: Vec<FileEntry>,
 
-    pub highlight_index: Option<usize>,
-    pub selected: Option<(Section, String)>,
-    pub file_list_scroll: usize,
+    pub(crate) highlight_index: Option<usize>,
+    pub(crate) selected: Option<(Section, String)>,
+    pub(crate) file_list_scroll: usize,
 
-    pub current_diff: DiffContent,
-    pub diff_scroll: usize,
+    pub(crate) current_diff: DiffContent,
+    pub(crate) diff_scroll: usize,
 
-    pub staged_count: usize,
-    pub unstaged_count: usize,
-    pub untracked_count: usize,
+    pub(crate) staged_count: usize,
+    pub(crate) unstaged_count: usize,
+    pub(crate) untracked_count: usize,
 
-    pub branch: BranchInfo,
+    pub(crate) branch: BranchInfo,
 
     visible_rows: Vec<VisibleRow>,
 
-    pub file_list_height: usize,
+    pub(crate) file_list_height: usize,
 }
 
 impl App {
@@ -65,7 +65,6 @@ impl App {
 
         Ok(Self {
             repo,
-            repo_path: path.to_string(),
             staged_files: status.staged_files,
             unstaged_files: status.unstaged_files,
             highlight_index,
@@ -83,7 +82,6 @@ impl App {
     }
 
     fn refresh(&mut self) -> Result<()> {
-        self.repo = git::get_repo(&self.repo_path)?;
         self.branch = git::get_branch_info(&self.repo);
 
         let status = git::get_status(&self.repo)?;
@@ -256,7 +254,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
     let mut app = App::new(path)?;
 
     let watcher = FileWatcher::new(Path::new(path));
-    let use_polling = watcher.is_err();
+    let mut use_polling = watcher.is_err();
     if let Err(ref e) = watcher {
         eprintln!("Warning: file watcher initialization failed: {e}. Falling back to polling.");
     }
@@ -304,7 +302,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                     pending_refresh = Some(Instant::now());
                 }
                 Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {}
+                Err(TryRecvError::Disconnected) => {
+                    if !use_polling {
+                        eprintln!(
+                            "Warning: file watcher disconnected. Falling back to polling."
+                        );
+                    }
+                    use_polling = true;
+                }
             }
 
             while w.receiver.try_recv().is_ok() {

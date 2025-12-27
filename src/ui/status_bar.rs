@@ -16,10 +16,8 @@ pub fn draw(
     unstaged_count: usize,
     untracked_count: usize,
 ) {
-    let branch_display = branch.display();
-
     let line = Line::from(vec![
-        Span::styled(&branch_display, Style::default().fg(colors::CYAN)),
+        Span::styled(branch.to_string(), Style::default().fg(colors::CYAN)),
         Span::raw(" "),
         Span::styled("S:", Style::default().fg(colors::TEXT)),
         Span::styled(staged_count.to_string(), Style::default().fg(colors::GREEN)),
