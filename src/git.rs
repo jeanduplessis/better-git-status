@@ -43,7 +43,10 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
         .recurse_untracked_dirs(true)
         .include_ignored(false)
         .include_unmodified(false)
-        .include_unreadable(false);
+        .include_unreadable(false)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true)
+        .renames_from_rewrites(true);
 
     let statuses = repo.statuses(Some(&mut opts))?;
 
@@ -57,8 +60,47 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
         let Some(raw_path) = entry.path() else {
             continue;
         };
-        let path = raw_path.to_string();
         let status = entry.status();
+
+        let (staged_path, staged_old_path) = if status.is_index_renamed() {
+            if let Some(delta) = entry.head_to_index() {
+                let new_path = delta
+                    .new_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| raw_path.to_string());
+                let old_path = delta
+                    .old_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string());
+                (new_path, old_path)
+            } else {
+                (raw_path.to_string(), None)
+            }
+        } else {
+            (raw_path.to_string(), None)
+        };
+
+        let (unstaged_path, unstaged_old_path) = if status.is_wt_renamed() {
+            if let Some(delta) = entry.index_to_workdir() {
+                let new_path = delta
+                    .new_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| raw_path.to_string());
+                let old_path = delta
+                    .old_file()
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string());
+                (new_path, old_path)
+            } else {
+                (raw_path.to_string(), None)
+            }
+        } else {
+            (raw_path.to_string(), None)
+        };
+
+        let path = raw_path.to_string();
 
         let is_conflict = status.is_conflicted();
         let is_submodule = status.is_index_typechange() || status.is_wt_typechange();
@@ -67,6 +109,7 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
             unstaged_paths.insert(path.clone());
             let entry = FileEntry {
                 path,
+                old_path: None,
                 status: FileStatus::Conflict,
                 added_lines: None,
                 deleted_lines: None,
@@ -87,6 +130,7 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
             let (added, is_binary) = count_lines_in_workdir(repo, &path);
             let entry = FileEntry {
                 path,
+                old_path: None,
                 status: FileStatus::Untracked,
                 added_lines: Some(added),
                 deleted_lines: Some(0),
@@ -108,6 +152,7 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
                     get_line_counts_for_section(repo, &path, Section::Staged);
                 staged_files.push(FileEntry {
                     path,
+                    old_path: staged_old_path,
                     status: file_status,
                     added_lines: added,
                     deleted_lines: deleted,
@@ -119,12 +164,13 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
         }
 
         if has_staged {
-            staged_paths.insert(path.clone());
+            staged_paths.insert(staged_path.clone());
             let file_status = get_staged_status(status);
             let (added, deleted, is_binary) =
-                get_line_counts_for_section(repo, &path, Section::Staged);
+                get_line_counts_for_section(repo, &staged_path, Section::Staged);
             staged_files.push(FileEntry {
-                path: path.clone(),
+                path: staged_path,
+                old_path: staged_old_path,
                 status: file_status,
                 added_lines: added,
                 deleted_lines: deleted,
@@ -134,12 +180,13 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
         }
 
         if has_unstaged {
-            unstaged_paths.insert(path.clone());
+            unstaged_paths.insert(unstaged_path.clone());
             let file_status = get_unstaged_status(status);
             let (added, deleted, is_binary) =
-                get_line_counts_for_section(repo, &path, Section::Unstaged);
+                get_line_counts_for_section(repo, &unstaged_path, Section::Unstaged);
             unstaged_files.push(FileEntry {
-                path,
+                path: unstaged_path,
+                old_path: unstaged_old_path,
                 status: file_status,
                 added_lines: added,
                 deleted_lines: deleted,
@@ -161,7 +208,7 @@ pub fn get_status(repo: &Repository) -> Result<StatusResult> {
     })
 }
 
-fn has_staged_changes(status: Status) -> bool {
+pub(crate) fn has_staged_changes(status: Status) -> bool {
     status.is_index_new()
         || status.is_index_modified()
         || status.is_index_deleted()
@@ -169,14 +216,14 @@ fn has_staged_changes(status: Status) -> bool {
         || status.is_index_typechange()
 }
 
-fn has_unstaged_changes(status: Status) -> bool {
+pub(crate) fn has_unstaged_changes(status: Status) -> bool {
     status.is_wt_modified()
         || status.is_wt_deleted()
         || status.is_wt_renamed()
         || status.is_wt_typechange()
 }
 
-fn get_staged_status(status: Status) -> FileStatus {
+pub(crate) fn get_staged_status(status: Status) -> FileStatus {
     if status.is_index_new() {
         FileStatus::Added
     } else if status.is_index_deleted() {
@@ -188,7 +235,7 @@ fn get_staged_status(status: Status) -> FileStatus {
     }
 }
 
-fn get_unstaged_status(status: Status) -> FileStatus {
+pub(crate) fn get_unstaged_status(status: Status) -> FileStatus {
     if status.is_wt_deleted() {
         FileStatus::Deleted
     } else if status.is_wt_renamed() {
@@ -268,9 +315,17 @@ fn get_line_counts_for_section(
     (Some(added), Some(deleted), false)
 }
 
-pub fn get_diff(repo: &Repository, path: &str, section: Section) -> DiffContent {
+pub fn get_diff(
+    repo: &Repository,
+    path: &str,
+    old_path: Option<&str>,
+    section: Section,
+) -> DiffContent {
     let mut opts = DiffOptions::new();
     opts.pathspec(path);
+    if let Some(old) = old_path {
+        opts.pathspec(old);
+    }
 
     let diff_result = match section {
         Section::Staged => {
@@ -451,4 +506,81 @@ pub fn get_untracked_diff(repo: &Repository, path: &str) -> DiffContent {
     }
 
     DiffContent::Text(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Status;
+
+    #[test]
+    fn has_staged_changes_index_new() {
+        let status = Status::INDEX_NEW;
+        assert!(has_staged_changes(status));
+        assert!(!has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_staged_changes_index_modified() {
+        let status = Status::INDEX_MODIFIED;
+        assert!(has_staged_changes(status));
+        assert!(!has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_staged_changes_index_deleted() {
+        let status = Status::INDEX_DELETED;
+        assert!(has_staged_changes(status));
+        assert!(!has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_staged_changes_index_renamed() {
+        let status = Status::INDEX_RENAMED;
+        assert!(has_staged_changes(status));
+        assert!(!has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_unstaged_changes_wt_modified() {
+        let status = Status::WT_MODIFIED;
+        assert!(!has_staged_changes(status));
+        assert!(has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_unstaged_changes_wt_deleted() {
+        let status = Status::WT_DELETED;
+        assert!(!has_staged_changes(status));
+        assert!(has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn has_unstaged_changes_wt_renamed() {
+        let status = Status::WT_RENAMED;
+        assert!(!has_staged_changes(status));
+        assert!(has_unstaged_changes(status));
+    }
+
+    #[test]
+    fn get_staged_status_returns_correct_type() {
+        assert_eq!(get_staged_status(Status::INDEX_NEW), FileStatus::Added);
+        assert_eq!(get_staged_status(Status::INDEX_DELETED), FileStatus::Deleted);
+        assert_eq!(get_staged_status(Status::INDEX_RENAMED), FileStatus::Renamed);
+        assert_eq!(get_staged_status(Status::INDEX_MODIFIED), FileStatus::Modified);
+    }
+
+    #[test]
+    fn get_unstaged_status_returns_correct_type() {
+        assert_eq!(get_unstaged_status(Status::WT_DELETED), FileStatus::Deleted);
+        assert_eq!(get_unstaged_status(Status::WT_RENAMED), FileStatus::Renamed);
+        assert_eq!(get_unstaged_status(Status::WT_MODIFIED), FileStatus::Modified);
+    }
+
+    #[test]
+    fn has_both_staged_and_unstaged_changes() {
+        let status = Status::INDEX_MODIFIED | Status::WT_MODIFIED;
+        assert!(has_staged_changes(status));
+        assert!(has_unstaged_changes(status));
+    }
 }

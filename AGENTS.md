@@ -47,4 +47,11 @@ Interactive git status CLI tool showing a tree view of changed files with diff p
 ## Testing
 - Run tests with `cargo test`
 - Unit tests go in the same file as the code being tested (inline `#[cfg(test)]` modules)
-- Integration tests would go in `tests/` directory
+- Integration tests go in `tests/` directory
+
+## Agent Instructions
+After making code changes:
+1. Run `cargo test` to verify all tests pass
+2. Run `cargo clippy` to check for linter warnings
+3. Update or add tests when modifying existing functionality or adding new features
+4. Ensure new code has corresponding test coverage

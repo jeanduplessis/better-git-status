@@ -152,7 +152,8 @@ impl App {
                 } else if file.status == crate::types::FileStatus::Untracked {
                     self.current_diff = git::get_untracked_diff(&self.repo, path);
                 } else {
-                    self.current_diff = git::get_diff(&self.repo, path, *section);
+                    self.current_diff =
+                        git::get_diff(&self.repo, path, file.old_path.as_deref(), *section);
                 }
             }
         }
@@ -255,7 +256,7 @@ impl App {
     }
 }
 
-fn build_visible_rows(staged: &[FileEntry], unstaged: &[FileEntry]) -> Vec<VisibleRow> {
+pub(crate) fn build_visible_rows(staged: &[FileEntry], unstaged: &[FileEntry]) -> Vec<VisibleRow> {
     let mut rows = Vec::new();
     for file in staged.iter() {
         rows.push(VisibleRow {
@@ -412,4 +413,153 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{FileEntry, FileStatus, Section};
+
+    fn file_entry(path: &str) -> FileEntry {
+        FileEntry {
+            path: path.to_string(),
+            old_path: None,
+            status: FileStatus::Modified,
+            added_lines: Some(1),
+            deleted_lines: Some(0),
+            is_binary: false,
+            is_submodule: false,
+        }
+    }
+
+    #[test]
+    fn build_visible_rows_staged_only() {
+        let staged = vec![file_entry("a.rs"), file_entry("b.rs")];
+        let unstaged = vec![];
+        let rows = build_visible_rows(&staged, &unstaged);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.section == Section::Staged));
+    }
+
+    #[test]
+    fn build_visible_rows_unstaged_only() {
+        let staged = vec![];
+        let unstaged = vec![file_entry("a.rs"), file_entry("b.rs")];
+        let rows = build_visible_rows(&staged, &unstaged);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.section == Section::Unstaged));
+    }
+
+    #[test]
+    fn build_visible_rows_both_sections() {
+        let staged = vec![file_entry("a.rs")];
+        let unstaged = vec![file_entry("b.rs")];
+        let rows = build_visible_rows(&staged, &unstaged);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].section, Section::Staged);
+        assert_eq!(rows[1].section, Section::Unstaged);
+    }
+
+    #[test]
+    fn build_visible_rows_empty() {
+        let rows = build_visible_rows(&[], &[]);
+        assert!(rows.is_empty());
+    }
+
+    struct TestApp {
+        staged_files: Vec<FileEntry>,
+        unstaged_files: Vec<FileEntry>,
+        highlight_index: Option<usize>,
+        visible_rows: Vec<VisibleRow>,
+        #[allow(dead_code)]
+        file_list_scroll: usize,
+        #[allow(dead_code)]
+        file_list_height: usize,
+    }
+
+    impl TestApp {
+        fn new(staged: Vec<FileEntry>, unstaged: Vec<FileEntry>) -> Self {
+            let visible_rows = build_visible_rows(&staged, &unstaged);
+            let highlight_index = if visible_rows.is_empty() {
+                None
+            } else {
+                Some(0)
+            };
+            Self {
+                staged_files: staged,
+                unstaged_files: unstaged,
+                highlight_index,
+                visible_rows,
+                file_list_scroll: 0,
+                file_list_height: 10,
+            }
+        }
+
+        fn count_headers_before(&self, file_idx: usize) -> usize {
+            let mut headers = 0;
+            if !self.staged_files.is_empty() {
+                headers += 1;
+            }
+            if !self.unstaged_files.is_empty() && file_idx >= self.staged_files.len() {
+                headers += 1;
+            }
+            headers
+        }
+
+        fn move_highlight(&mut self, delta: isize) {
+            if self.visible_rows.is_empty() {
+                return;
+            }
+            let current = self.highlight_index.unwrap_or(0) as isize;
+            let new_idx =
+                (current + delta).clamp(0, self.visible_rows.len() as isize - 1) as usize;
+            self.highlight_index = Some(new_idx);
+        }
+    }
+
+    #[test]
+    fn count_headers_before_index_0_with_staged() {
+        let app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        assert_eq!(app.count_headers_before(0), 1);
+    }
+
+    #[test]
+    fn count_headers_before_in_unstaged_section() {
+        let app = TestApp::new(vec![file_entry("a.rs")], vec![file_entry("b.rs")]);
+        assert_eq!(app.count_headers_before(1), 2);
+    }
+
+    #[test]
+    fn count_headers_before_only_unstaged() {
+        let app = TestApp::new(vec![], vec![file_entry("a.rs")]);
+        assert_eq!(app.count_headers_before(0), 1);
+    }
+
+    #[test]
+    fn move_highlight_down_from_0() {
+        let mut app = TestApp::new(vec![file_entry("a.rs"), file_entry("b.rs")], vec![]);
+        app.move_highlight(1);
+        assert_eq!(app.highlight_index, Some(1));
+    }
+
+    #[test]
+    fn move_highlight_up_from_0_stays() {
+        let mut app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        app.move_highlight(-1);
+        assert_eq!(app.highlight_index, Some(0));
+    }
+
+    #[test]
+    fn move_highlight_down_past_end_clamps() {
+        let mut app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        app.move_highlight(10);
+        assert_eq!(app.highlight_index, Some(0));
+    }
+
+    #[test]
+    fn move_highlight_empty_no_panic() {
+        let mut app = TestApp::new(vec![], vec![]);
+        app.move_highlight(1);
+        assert_eq!(app.highlight_index, None);
+    }
 }
