@@ -154,10 +154,7 @@ mod status_tests {
         assert_eq!(status.staged_files.len(), 1);
         assert_eq!(status.staged_files[0].status, FileStatus::Renamed);
         assert_eq!(status.staged_files[0].path, "new.txt");
-        assert_eq!(
-            status.staged_files[0].old_path,
-            Some("old.txt".to_string())
-        );
+        assert_eq!(status.staged_files[0].old_path, Some("old.txt".to_string()));
     }
 
     #[test]

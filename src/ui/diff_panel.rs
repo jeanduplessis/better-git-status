@@ -171,7 +171,10 @@ fn render_diff_lines(diff_lines: &[DiffLine], width: usize) -> Vec<Line<'static>
                     first = false;
                 } else {
                     result_lines.push(Line::from(vec![
-                        Span::styled(continuation_gutter.clone(), Style::default().fg(colors::GRAY)),
+                        Span::styled(
+                            continuation_gutter.clone(),
+                            Style::default().fg(colors::GRAY),
+                        ),
                         Span::styled(chunk, content_style),
                     ]));
                 }

@@ -1,3 +1,8 @@
+use std::collections::HashSet;
+
+/// Type alias for multi-select set containing (Section, path) pairs.
+pub type MultiSelectSet = HashSet<(Section, String)>;
+
 /// A file entry representing a changed file in the git repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
@@ -43,7 +48,7 @@ impl FileStatus {
 }
 
 /// Which section a file belongs to (staged or unstaged).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
     Staged,
     Unstaged,

@@ -1,12 +1,11 @@
 use crate::git;
-use crate::types::{BranchInfo, DiffContent, FileEntry, Section, VisibleRow};
+use crate::types::{BranchInfo, DiffContent, FileEntry, MultiSelectSet, Section, VisibleRow};
 use crate::ui;
 use crate::watcher::{FileWatcher, WatcherEvent};
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -27,6 +26,7 @@ pub struct App {
 
     pub(crate) highlight_index: Option<usize>,
     pub(crate) selected: Option<(Section, String)>,
+    pub(crate) multi_selected: MultiSelectSet,
     pub(crate) file_list_scroll: usize,
 
     pub(crate) current_diff: DiffContent,
@@ -75,6 +75,7 @@ impl App {
             unstaged_files: status.unstaged_files,
             highlight_index,
             selected: None,
+            multi_selected: MultiSelectSet::new(),
             file_list_scroll: 0,
             current_diff,
             diff_scroll: 0,
@@ -104,10 +105,13 @@ impl App {
         if self.visible_rows.is_empty() {
             self.highlight_index = None;
             self.selected = None;
+            self.multi_selected.clear();
             self.current_diff = DiffContent::Clean;
             self.diff_scroll = 0;
             return Ok(());
         }
+
+        self.prune_multi_select();
 
         if let Some(idx) = self.highlight_index {
             if idx >= self.visible_rows.len() {
@@ -166,6 +170,45 @@ impl App {
                 self.diff_scroll = 0;
                 self.update_diff_for_selected();
             }
+        }
+    }
+
+    fn toggle_multi_select(&mut self) {
+        if let Some(idx) = self.highlight_index {
+            if let Some(row) = self.visible_rows.get(idx) {
+                let key = (row.section, row.path.clone());
+                if self.multi_selected.contains(&key) {
+                    self.multi_selected.remove(&key);
+                } else {
+                    self.multi_selected.insert(key);
+                }
+            }
+        }
+    }
+
+    fn clear_multi_select(&mut self) {
+        self.multi_selected.clear();
+    }
+
+    fn prune_multi_select(&mut self) {
+        self.multi_selected.retain(|(section, path)| {
+            self.visible_rows
+                .iter()
+                .any(|r| r.section == *section && &r.path == path)
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn get_action_targets(&self) -> Vec<(Section, String)> {
+        if self.multi_selected.is_empty() {
+            if let Some(idx) = self.highlight_index {
+                if let Some(row) = self.visible_rows.get(idx) {
+                    return vec![(row.section, row.path.clone())];
+                }
+            }
+            vec![]
+        } else {
+            self.multi_selected.iter().cloned().collect()
         }
     }
 
@@ -322,10 +365,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => break,
+                            KeyCode::Char('q') => break,
+                            KeyCode::Esc => {
+                                if app.multi_selected.is_empty() {
+                                    break;
+                                } else {
+                                    app.clear_multi_select();
+                                }
+                            }
                             KeyCode::Down => app.move_highlight(1),
                             KeyCode::Up => app.move_highlight(-1),
-                            KeyCode::Char(' ') | KeyCode::Enter => app.select_current(),
+                            KeyCode::Char(' ') => app.toggle_multi_select(),
+                            KeyCode::Enter => app.select_current(),
                             KeyCode::PageDown => {
                                 let size = terminal.size()?;
                                 let height = size.height.saturating_sub(10) as usize;
@@ -386,9 +437,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     if !use_polling {
-                        eprintln!(
-                            "Warning: file watcher disconnected. Falling back to polling."
-                        );
+                        eprintln!("Warning: file watcher disconnected. Falling back to polling.");
                     }
                     use_polling = true;
                 }
@@ -466,15 +515,86 @@ mod tests {
         assert!(rows.is_empty());
     }
 
+    // Shared helper functions for multi-select operations.
+    // These mirror the logic in App but work on raw state, avoiding duplication.
+
+    fn toggle_multi_select_helper(
+        highlight_index: Option<usize>,
+        visible_rows: &[VisibleRow],
+        multi_selected: &mut MultiSelectSet,
+    ) {
+        if let Some(idx) = highlight_index {
+            if let Some(row) = visible_rows.get(idx) {
+                let key = (row.section, row.path.clone());
+                if multi_selected.contains(&key) {
+                    multi_selected.remove(&key);
+                } else {
+                    multi_selected.insert(key);
+                }
+            }
+        }
+    }
+
+    fn prune_multi_select_helper(visible_rows: &[VisibleRow], multi_selected: &mut MultiSelectSet) {
+        multi_selected.retain(|(section, path)| {
+            visible_rows
+                .iter()
+                .any(|r| r.section == *section && &r.path == path)
+        });
+    }
+
+    fn get_action_targets_helper(
+        highlight_index: Option<usize>,
+        visible_rows: &[VisibleRow],
+        multi_selected: &MultiSelectSet,
+    ) -> Vec<(Section, String)> {
+        if multi_selected.is_empty() {
+            if let Some(idx) = highlight_index {
+                if let Some(row) = visible_rows.get(idx) {
+                    return vec![(row.section, row.path.clone())];
+                }
+            }
+            vec![]
+        } else {
+            multi_selected.iter().cloned().collect()
+        }
+    }
+
+    fn move_highlight_helper(
+        highlight_index: Option<usize>,
+        visible_rows: &[VisibleRow],
+        delta: isize,
+    ) -> Option<usize> {
+        if visible_rows.is_empty() {
+            return None;
+        }
+        let current = highlight_index.unwrap_or(0) as isize;
+        let new_idx = (current + delta).clamp(0, visible_rows.len() as isize - 1) as usize;
+        Some(new_idx)
+    }
+
+    fn count_headers_before_helper(
+        staged_count: usize,
+        unstaged_count: usize,
+        file_idx: usize,
+    ) -> usize {
+        let mut headers = 0;
+        if staged_count > 0 {
+            headers += 1;
+        }
+        if unstaged_count > 0 && file_idx >= staged_count {
+            headers += 1;
+        }
+        headers
+    }
+
+    /// Minimal test harness that uses shared helper functions.
     struct TestApp {
         staged_files: Vec<FileEntry>,
         unstaged_files: Vec<FileEntry>,
         highlight_index: Option<usize>,
         visible_rows: Vec<VisibleRow>,
-        #[allow(dead_code)]
-        file_list_scroll: usize,
-        #[allow(dead_code)]
-        file_list_height: usize,
+        multi_selected: MultiSelectSet,
     }
 
     impl TestApp {
@@ -490,30 +610,45 @@ mod tests {
                 unstaged_files: unstaged,
                 highlight_index,
                 visible_rows,
-                file_list_scroll: 0,
-                file_list_height: 10,
+                multi_selected: MultiSelectSet::new(),
             }
         }
 
         fn count_headers_before(&self, file_idx: usize) -> usize {
-            let mut headers = 0;
-            if !self.staged_files.is_empty() {
-                headers += 1;
-            }
-            if !self.unstaged_files.is_empty() && file_idx >= self.staged_files.len() {
-                headers += 1;
-            }
-            headers
+            count_headers_before_helper(
+                self.staged_files.len(),
+                self.unstaged_files.len(),
+                file_idx,
+            )
         }
 
         fn move_highlight(&mut self, delta: isize) {
-            if self.visible_rows.is_empty() {
-                return;
-            }
-            let current = self.highlight_index.unwrap_or(0) as isize;
-            let new_idx =
-                (current + delta).clamp(0, self.visible_rows.len() as isize - 1) as usize;
-            self.highlight_index = Some(new_idx);
+            self.highlight_index =
+                move_highlight_helper(self.highlight_index, &self.visible_rows, delta);
+        }
+
+        fn toggle_multi_select(&mut self) {
+            toggle_multi_select_helper(
+                self.highlight_index,
+                &self.visible_rows,
+                &mut self.multi_selected,
+            );
+        }
+
+        fn clear_multi_select(&mut self) {
+            self.multi_selected.clear();
+        }
+
+        fn prune_multi_select(&mut self) {
+            prune_multi_select_helper(&self.visible_rows, &mut self.multi_selected);
+        }
+
+        fn get_action_targets(&self) -> Vec<(Section, String)> {
+            get_action_targets_helper(
+                self.highlight_index,
+                &self.visible_rows,
+                &self.multi_selected,
+            )
         }
     }
 
@@ -561,5 +696,90 @@ mod tests {
         let mut app = TestApp::new(vec![], vec![]);
         app.move_highlight(1);
         assert_eq!(app.highlight_index, None);
+    }
+
+    #[test]
+    fn toggle_multi_select_adds_file() {
+        let mut app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        assert!(app.multi_selected.is_empty());
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 1);
+        assert!(app
+            .multi_selected
+            .contains(&(Section::Staged, "a.rs".to_string())));
+    }
+
+    #[test]
+    fn toggle_multi_select_removes_file() {
+        let mut app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 1);
+        app.toggle_multi_select();
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn multi_select_persists_across_navigation() {
+        let mut app = TestApp::new(vec![file_entry("a.rs"), file_entry("b.rs")], vec![]);
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 2);
+        assert!(app
+            .multi_selected
+            .contains(&(Section::Staged, "a.rs".to_string())));
+        assert!(app
+            .multi_selected
+            .contains(&(Section::Staged, "b.rs".to_string())));
+    }
+
+    #[test]
+    fn clear_multi_select_clears_all() {
+        let mut app = TestApp::new(vec![file_entry("a.rs"), file_entry("b.rs")], vec![]);
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 2);
+        app.clear_multi_select();
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn prune_multi_select_removes_deleted_files() {
+        let mut app = TestApp::new(
+            vec![file_entry("a.rs"), file_entry("b.rs")],
+            vec![file_entry("c.rs")],
+        );
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 3);
+
+        app.visible_rows = build_visible_rows(&[file_entry("a.rs")], &[]);
+        app.prune_multi_select();
+        assert_eq!(app.multi_selected.len(), 1);
+        assert!(app
+            .multi_selected
+            .contains(&(Section::Staged, "a.rs".to_string())));
+    }
+
+    #[test]
+    fn get_action_targets_returns_highlighted_when_no_multi_select() {
+        let app = TestApp::new(vec![file_entry("a.rs")], vec![]);
+        let targets = app.get_action_targets();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0], (Section::Staged, "a.rs".to_string()));
+    }
+
+    #[test]
+    fn get_action_targets_returns_multi_selected_when_present() {
+        let mut app = TestApp::new(vec![file_entry("a.rs"), file_entry("b.rs")], vec![]);
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        let targets = app.get_action_targets();
+        assert_eq!(targets.len(), 2);
     }
 }

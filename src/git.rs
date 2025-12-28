@@ -565,16 +565,28 @@ mod tests {
     #[test]
     fn get_staged_status_returns_correct_type() {
         assert_eq!(get_staged_status(Status::INDEX_NEW), FileStatus::Added);
-        assert_eq!(get_staged_status(Status::INDEX_DELETED), FileStatus::Deleted);
-        assert_eq!(get_staged_status(Status::INDEX_RENAMED), FileStatus::Renamed);
-        assert_eq!(get_staged_status(Status::INDEX_MODIFIED), FileStatus::Modified);
+        assert_eq!(
+            get_staged_status(Status::INDEX_DELETED),
+            FileStatus::Deleted
+        );
+        assert_eq!(
+            get_staged_status(Status::INDEX_RENAMED),
+            FileStatus::Renamed
+        );
+        assert_eq!(
+            get_staged_status(Status::INDEX_MODIFIED),
+            FileStatus::Modified
+        );
     }
 
     #[test]
     fn get_unstaged_status_returns_correct_type() {
         assert_eq!(get_unstaged_status(Status::WT_DELETED), FileStatus::Deleted);
         assert_eq!(get_unstaged_status(Status::WT_RENAMED), FileStatus::Renamed);
-        assert_eq!(get_unstaged_status(Status::WT_MODIFIED), FileStatus::Modified);
+        assert_eq!(
+            get_unstaged_status(Status::WT_MODIFIED),
+            FileStatus::Modified
+        );
     }
 
     #[test]

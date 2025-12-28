@@ -61,6 +61,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         &app.unstaged_files,
         app.highlight_index,
         app.selected.as_ref(),
+        &app.multi_selected,
         app.file_list_scroll,
     );
 
@@ -77,7 +78,7 @@ fn draw_too_small(frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DiffContent, FileEntry, FileStatus, Section};
+    use crate::types::{DiffContent, FileEntry, FileStatus, MultiSelectSet, Section};
     use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
 
     fn test_file_entry(path: &str, status: FileStatus) -> FileEntry {
@@ -127,6 +128,7 @@ mod tests {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let staged = vec![test_file_entry("file.rs", FileStatus::Modified)];
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -136,6 +138,7 @@ mod tests {
                     &[],
                     None,
                     None,
+                    &multi_selected,
                     0,
                 );
             })
@@ -149,6 +152,7 @@ mod tests {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let unstaged = vec![test_file_entry("file.rs", FileStatus::Modified)];
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -158,6 +162,7 @@ mod tests {
                     &unstaged,
                     None,
                     None,
+                    &multi_selected,
                     0,
                 );
             })
@@ -172,6 +177,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let staged = vec![test_file_entry("staged.rs", FileStatus::Added)];
         let unstaged = vec![test_file_entry("unstaged.rs", FileStatus::Modified)];
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -181,6 +187,7 @@ mod tests {
                     &unstaged,
                     None,
                     None,
+                    &multi_selected,
                     0,
                 );
             })
@@ -195,6 +202,7 @@ mod tests {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let staged = vec![test_file_entry("file.rs", FileStatus::Modified)];
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -204,6 +212,7 @@ mod tests {
                     &[],
                     Some(0),
                     None,
+                    &multi_selected,
                     0,
                 );
             })
@@ -218,6 +227,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let staged = vec![test_file_entry("file.rs", FileStatus::Modified)];
         let selected = (Section::Staged, "file.rs".to_string());
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -227,6 +237,7 @@ mod tests {
                     &[],
                     None,
                     Some(&selected),
+                    &multi_selected,
                     0,
                 );
             })
@@ -242,6 +253,7 @@ mod tests {
         let mut entry = test_file_entry("new.rs", FileStatus::Renamed);
         entry.old_path = Some("old.rs".to_string());
         let staged = vec![entry];
+        let multi_selected = MultiSelectSet::new();
         terminal
             .draw(|frame| {
                 file_list::draw(
@@ -251,12 +263,38 @@ mod tests {
                     &[],
                     None,
                     None,
+                    &multi_selected,
                     0,
                 );
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         assert!(buffer_contains(&buffer, "old.rs → new.rs"));
+    }
+
+    #[test]
+    fn file_list_shows_multi_select_indicator() {
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let staged = vec![test_file_entry("file.rs", FileStatus::Modified)];
+        let mut multi_selected = MultiSelectSet::new();
+        multi_selected.insert((Section::Staged, "file.rs".to_string()));
+        terminal
+            .draw(|frame| {
+                file_list::draw(
+                    frame,
+                    frame.area(),
+                    &staged,
+                    &[],
+                    None,
+                    None,
+                    &multi_selected,
+                    0,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "◆"));
     }
 
     #[test]

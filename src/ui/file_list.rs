@@ -1,4 +1,4 @@
-use crate::types::{FileEntry, FileStatus, Section};
+use crate::types::{FileEntry, FileStatus, MultiSelectSet, Section};
 use crate::ui::colors;
 use ratatui::{
     layout::Rect,
@@ -8,6 +8,7 @@ use ratatui::{
     Frame,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -15,6 +16,7 @@ pub fn draw(
     unstaged_files: &[FileEntry],
     highlight_index: Option<usize>,
     selected: Option<&(Section, String)>,
+    multi_selected: &MultiSelectSet,
     scroll_offset: usize,
 ) {
     let mut items: Vec<ListItem> = Vec::new();
@@ -33,10 +35,12 @@ pub fn draw(
             let is_selected = selected
                 .map(|(s, p)| *s == Section::Staged && p == &file.path)
                 .unwrap_or(false);
+            let is_multi_selected = multi_selected.contains(&(Section::Staged, file.path.clone()));
             items.push(create_file_item(
                 file,
                 is_highlighted,
                 is_selected,
+                is_multi_selected,
                 area.width,
             ));
             current_index += 1;
@@ -56,10 +60,13 @@ pub fn draw(
             let is_selected = selected
                 .map(|(s, p)| *s == Section::Unstaged && p == &file.path)
                 .unwrap_or(false);
+            let is_multi_selected =
+                multi_selected.contains(&(Section::Unstaged, file.path.clone()));
             items.push(create_file_item(
                 file,
                 is_highlighted,
                 is_selected,
+                is_multi_selected,
                 area.width,
             ));
             current_index += 1;
@@ -84,13 +91,18 @@ fn create_file_item(
     file: &FileEntry,
     is_highlighted: bool,
     is_selected: bool,
+    is_multi_selected: bool,
     width: u16,
 ) -> ListItem<'static> {
-    let prefix = match (is_highlighted, is_selected) {
-        (true, true) => ">● ",
-        (true, false) => ">  ",
-        (false, true) => " ● ",
-        (false, false) => "   ",
+    let prefix = match (is_highlighted, is_selected, is_multi_selected) {
+        (true, true, true) => ">●◆",
+        (true, true, false) => ">● ",
+        (true, false, true) => "> ◆",
+        (true, false, false) => ">  ",
+        (false, true, true) => " ●◆",
+        (false, true, false) => " ● ",
+        (false, false, true) => "  ◆",
+        (false, false, false) => "   ",
     };
 
     let status_color = get_status_color(file.status);
