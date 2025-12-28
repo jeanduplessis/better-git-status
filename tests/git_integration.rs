@@ -358,8 +358,8 @@ mod stage_unstage_tests {
         let status = get_status(&test_repo.repo).unwrap();
         assert_eq!(status.unstaged_files.len(), 2);
 
-        let count = stage_all(&test_repo.repo).unwrap();
-        assert_eq!(count, 2);
+        let paths = stage_all(&test_repo.repo).unwrap();
+        assert_eq!(paths.len(), 2);
 
         let status = get_status(&test_repo.repo).unwrap();
         assert!(status.unstaged_files.is_empty());
@@ -377,8 +377,8 @@ mod stage_unstage_tests {
         let status = get_status(&test_repo.repo).unwrap();
         assert_eq!(status.staged_files.len(), 2);
 
-        let count = unstage_all(&test_repo.repo).unwrap();
-        assert_eq!(count, 2);
+        let paths = unstage_all(&test_repo.repo).unwrap();
+        assert_eq!(paths.len(), 2);
 
         let status = get_status(&test_repo.repo).unwrap();
         assert!(status.staged_files.is_empty());
@@ -619,5 +619,72 @@ mod app_stage_unstage_tests {
 
         assert!(app.status_message.is_some());
         assert!(app.status_message.as_ref().unwrap().contains("Staged"));
+    }
+
+    #[test]
+    fn app_undo_after_stage_unstages_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        app.stage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 2);
+        assert_eq!(app.unstaged_count, 0);
+        assert!(app.last_action.is_some());
+
+        app.undo().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+        assert!(app.last_action.is_none());
+        assert!(app.status_message.as_ref().unwrap().contains("Undid stage"));
+    }
+
+    #[test]
+    fn app_undo_after_unstage_restages_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.unstage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 1);
+        assert!(app.last_action.is_some());
+
+        app.undo().unwrap();
+
+        assert_eq!(app.staged_count, 1);
+        assert_eq!(app.unstaged_count, 0);
+        assert!(app.last_action.is_none());
+        assert!(app.status_message.as_ref().unwrap().contains("Undid unstage"));
+    }
+
+    #[test]
+    fn app_second_undo_is_noop() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.stage_selected().unwrap();
+        app.undo().unwrap();
+
+        assert!(app.last_action.is_none());
+        let _msg_after_first_undo = app.status_message.clone();
+
+        app.status_message = None;
+        app.undo().unwrap();
+
+        assert!(app.status_message.is_none());
+        assert!(app.last_action.is_none());
     }
 }

@@ -1,14 +1,15 @@
 use crate::git;
 use crate::types::{
     BranchInfo, ConfirmAction, ConfirmPrompt, DiffContent, FileEntry, MultiSelectSet, Section,
-    VisibleRow,
+    UndoAction, VisibleRow,
 };
 use crate::ui;
 use crate::watcher::{FileWatcher, WatcherEvent};
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -50,6 +51,7 @@ pub struct App {
 
     pub confirm_prompt: Option<ConfirmPrompt>,
     pub status_message: Option<String>,
+    pub last_action: Option<UndoAction>,
 }
 
 impl App {
@@ -95,6 +97,7 @@ impl App {
             diff_area: Rect::default(),
             confirm_prompt: None,
             status_message: None,
+            last_action: None,
         })
     }
 
@@ -233,9 +236,10 @@ impl App {
 
         let count = paths.len();
         git::stage_files(&self.repo, &paths)?;
+        self.last_action = Some(UndoAction::Stage { paths });
         self.clear_multi_select();
         self.refresh()?;
-        self.status_message = Some(format!("Staged {} file{}", count, if count == 1 { "" } else { "s" }));
+        self.status_message = Some(format!("Staged {} file{}", count, plural_s(count)));
         Ok(())
     }
 
@@ -253,9 +257,44 @@ impl App {
 
         let count = paths.len();
         git::unstage_files(&self.repo, &paths)?;
+        self.last_action = Some(UndoAction::Unstage { paths });
         self.clear_multi_select();
         self.refresh()?;
-        self.status_message = Some(format!("Unstaged {} file{}", count, if count == 1 { "" } else { "s" }));
+        self.status_message = Some(format!("Unstaged {} file{}", count, plural_s(count)));
+        Ok(())
+    }
+
+    pub fn undo(&mut self) -> Result<()> {
+        let action = match &self.last_action {
+            Some(a) => a.clone(),
+            None => return Ok(()),
+        };
+
+        match action {
+            UndoAction::Stage { paths } => {
+                let count = paths.len();
+                git::unstage_files(&self.repo, &paths)?;
+                self.last_action = None;
+                self.refresh()?;
+                self.status_message = Some(format!(
+                    "Undid stage of {} file{}",
+                    count,
+                    plural_s(count)
+                ));
+            }
+            UndoAction::Unstage { paths } => {
+                let count = paths.len();
+                git::stage_files(&self.repo, &paths)?;
+                self.last_action = None;
+                self.refresh()?;
+                self.status_message = Some(format!(
+                    "Undid unstage of {} file{}",
+                    count,
+                    plural_s(count)
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -265,7 +304,7 @@ impl App {
             return;
         }
         self.confirm_prompt = Some(ConfirmPrompt {
-            message: format!("Stage {} file{}? [y/N]", count, if count == 1 { "" } else { "s" }),
+            message: format!("Stage {} file{}? [y/N]", count, plural_s(count)),
             action: ConfirmAction::StageAll,
         });
     }
@@ -276,7 +315,7 @@ impl App {
             return;
         }
         self.confirm_prompt = Some(ConfirmPrompt {
-            message: format!("Unstage {} file{}? [y/N]", count, if count == 1 { "" } else { "s" }),
+            message: format!("Unstage {} file{}? [y/N]", count, plural_s(count)),
             action: ConfirmAction::UnstageAll,
         });
     }
@@ -286,19 +325,27 @@ impl App {
             if confirmed {
                 match prompt.action {
                     ConfirmAction::StageAll => {
-                        let count = git::stage_all(&self.repo)?;
+                        let paths = git::stage_all(&self.repo)?;
+                        let count = paths.len();
+                        if count > 0 {
+                            self.last_action = Some(UndoAction::Stage { paths });
+                        }
                         self.clear_multi_select();
                         self.refresh()?;
                         if count > 0 {
-                            self.status_message = Some(format!("Staged {} file{}", count, if count == 1 { "" } else { "s" }));
+                            self.status_message = Some(format!("Staged {} file{}", count, plural_s(count)));
                         }
                     }
                     ConfirmAction::UnstageAll => {
-                        let count = git::unstage_all(&self.repo)?;
+                        let paths = git::unstage_all(&self.repo)?;
+                        let count = paths.len();
+                        if count > 0 {
+                            self.last_action = Some(UndoAction::Unstage { paths });
+                        }
                         self.clear_multi_select();
                         self.refresh()?;
                         if count > 0 {
-                            self.status_message = Some(format!("Unstaged {} file{}", count, if count == 1 { "" } else { "s" }));
+                            self.status_message = Some(format!("Unstaged {} file{}", count, plural_s(count)));
                         }
                     }
                 }
@@ -392,6 +439,10 @@ impl App {
             self.select_current();
         }
     }
+}
+
+fn plural_s(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 pub(crate) fn build_visible_rows(staged: &[FileEntry], unstaged: &[FileEntry]) -> Vec<VisibleRow> {
@@ -500,6 +551,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                                     let height = size.height.saturating_sub(10) as usize;
                                     let width = size.width.saturating_sub(2) as usize;
                                     app.page_scroll_diff(false, height, width);
+                                }
+                                KeyCode::Char('z')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if let Err(e) = app.undo() {
+                                        app.status_message = Some(format!("Error: {}", e));
+                                    }
                                 }
                                 _ => {}
                             }

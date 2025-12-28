@@ -131,6 +131,13 @@ pub enum ConfirmAction {
     UnstageAll,
 }
 
+/// Undo action for reverting stage/unstage operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndoAction {
+    Stage { paths: Vec<String> },
+    Unstage { paths: Vec<String> },
+}
+
 /// Confirmation prompt state.
 #[derive(Debug, Clone)]
 pub struct ConfirmPrompt {
@@ -159,5 +166,47 @@ mod tests {
 
         let detached = BranchInfo::Detached("abc1234".to_string());
         assert_eq!(detached.to_string(), "HEAD@abc1234");
+    }
+
+    #[test]
+    fn undo_action_stage_variant() {
+        let action = UndoAction::Stage {
+            paths: vec!["a.rs".to_string(), "b.rs".to_string()],
+        };
+        if let UndoAction::Stage { paths } = action {
+            assert_eq!(paths.len(), 2);
+            assert_eq!(paths[0], "a.rs");
+            assert_eq!(paths[1], "b.rs");
+        } else {
+            panic!("Expected Stage variant");
+        }
+    }
+
+    #[test]
+    fn undo_action_unstage_variant() {
+        let action = UndoAction::Unstage {
+            paths: vec!["c.rs".to_string()],
+        };
+        if let UndoAction::Unstage { paths } = action {
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0], "c.rs");
+        } else {
+            panic!("Expected Unstage variant");
+        }
+    }
+
+    #[test]
+    fn undo_action_equality() {
+        let a1 = UndoAction::Stage {
+            paths: vec!["a.rs".to_string()],
+        };
+        let a2 = UndoAction::Stage {
+            paths: vec!["a.rs".to_string()],
+        };
+        let a3 = UndoAction::Stage {
+            paths: vec!["b.rs".to_string()],
+        };
+        assert_eq!(a1, a2);
+        assert_ne!(a1, a3);
     }
 }

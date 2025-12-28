@@ -531,24 +531,22 @@ pub fn unstage_files(repo: &Repository, paths: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub fn stage_all(repo: &Repository) -> Result<usize> {
+pub fn stage_all(repo: &Repository) -> Result<Vec<String>> {
     let status = get_status(repo)?;
     let paths: Vec<String> = status.unstaged_files.into_iter().map(|f| f.path).collect();
-    let count = paths.len();
-    if count > 0 {
+    if !paths.is_empty() {
         stage_files(repo, &paths)?;
     }
-    Ok(count)
+    Ok(paths)
 }
 
-pub fn unstage_all(repo: &Repository) -> Result<usize> {
+pub fn unstage_all(repo: &Repository) -> Result<Vec<String>> {
     let status = get_status(repo)?;
     let paths: Vec<String> = status.staged_files.into_iter().map(|f| f.path).collect();
-    let count = paths.len();
-    if count > 0 {
+    if !paths.is_empty() {
         unstage_files(repo, &paths)?;
     }
-    Ok(count)
+    Ok(paths)
 }
 
 pub fn get_untracked_diff(repo: &Repository, path: &str) -> DiffContent {
