@@ -55,3 +55,27 @@ After making code changes:
 2. Run `cargo clippy` to check for linter warnings
 3. Update or add tests when modifying existing functionality or adding new features
 4. Ensure new code has corresponding test coverage
+
+## Documentation (docs/)
+
+All markdown files in `docs/` must have YAML frontmatter with:
+
+```yaml
+---
+status: NEW | IN-PROGRESS | COMPLETED
+last_updated: YYYY-MM-DD
+---
+```
+
+For implementation plans, also include:
+```yaml
+completed_phases: 1, 2, 3  # comma-separated list of completed phase numbers
+```
+
+**Frontmatter maintenance rules:**
+- Update `last_updated` to the current date whenever the document content is modified
+- Update `status` when the document state changes:
+  - `NEW` - Document just created, not yet reviewed or started
+  - `IN-PROGRESS` - Actively being worked on
+  - `COMPLETED` - Finished, no further changes expected
+- Update `completed_phases` when implementation plan phases are completed
