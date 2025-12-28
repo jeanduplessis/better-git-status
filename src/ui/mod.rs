@@ -45,10 +45,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     status_bar::draw(
         frame,
         chunks[0],
-        &app.branch,
-        app.staged_count,
-        app.unstaged_count,
-        app.untracked_count,
+        status_bar::StatusBarState {
+            branch: &app.branch,
+            staged_count: app.staged_count,
+            unstaged_count: app.unstaged_count,
+            untracked_count: app.untracked_count,
+            confirm_prompt: app.confirm_prompt.as_ref(),
+            status_message: app.status_message.as_deref(),
+        },
     );
 
     app.file_list_area = chunks[1];

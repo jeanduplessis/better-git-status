@@ -124,6 +124,20 @@ pub struct VisibleRow {
     pub path: String,
 }
 
+/// Action to perform after confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmAction {
+    StageAll,
+    UnstageAll,
+}
+
+/// Confirmation prompt state.
+#[derive(Debug, Clone)]
+pub struct ConfirmPrompt {
+    pub message: String,
+    pub action: ConfirmAction,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

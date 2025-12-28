@@ -446,6 +446,111 @@ pub fn get_diff(
     }
 }
 
+/// Stage files by adding them to the index.
+///
+/// Handles regular files (add to index) and deleted files (remove from index).
+///
+/// NOTE: Renamed files are handled on a best-effort basis. This function operates
+/// on individual paths and does not automatically handle the old_path of a rename.
+/// For full rename support, the caller should stage both the removal of the old path
+/// and addition of the new path. See Phase 13 for potential improvements.
+pub fn stage_files(repo: &Repository, paths: &[String]) -> Result<()> {
+    let mut index = repo.index().context("Failed to get repository index")?;
+    let workdir = repo.workdir().context("Repository has no working directory")?;
+
+    for path in paths {
+        let full_path = workdir.join(path);
+
+        if full_path.exists() {
+            index
+                .add_path(std::path::Path::new(path))
+                .with_context(|| format!("Failed to stage file: {}", path))?;
+        } else {
+            index
+                .remove_path(std::path::Path::new(path))
+                .with_context(|| format!("Failed to stage deleted file: {}", path))?;
+        }
+    }
+
+    index.write().context("Failed to write index")?;
+    Ok(())
+}
+
+/// Unstage files by resetting the index to HEAD.
+///
+/// For files that exist in HEAD, restores them to the HEAD version.
+/// For files that don't exist in HEAD (new files), removes them from the index.
+///
+/// NOTE: Renamed files are handled on a best-effort basis. This function operates
+/// on individual paths and does not automatically restore the old_path of a rename.
+/// See Phase 13 for potential improvements.
+pub fn unstage_files(repo: &Repository, paths: &[String]) -> Result<()> {
+    let head = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let head_tree = head.as_ref().and_then(|c| c.tree().ok());
+
+    let mut index = repo.index().context("Failed to get repository index")?;
+
+    for path in paths {
+        let path_obj = std::path::Path::new(path);
+
+        if let Some(ref tree) = head_tree {
+            if let Ok(entry) = tree.get_path(path_obj) {
+                let blob = repo
+                    .find_blob(entry.id())
+                    .context("Failed to find blob for path")?;
+                let entry = git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: entry.filemode() as u32,
+                    uid: 0,
+                    gid: 0,
+                    file_size: blob.content().len() as u32,
+                    id: entry.id(),
+                    flags: 0,
+                    flags_extended: 0,
+                    path: path.as_bytes().to_vec(),
+                };
+                index
+                    .add(&entry)
+                    .with_context(|| format!("Failed to reset file: {}", path))?;
+            } else {
+                index
+                    .remove_path(path_obj)
+                    .with_context(|| format!("Failed to remove new file from index: {}", path))?;
+            }
+        } else {
+            index
+                .remove_path(path_obj)
+                .with_context(|| format!("Failed to remove file from index: {}", path))?;
+        }
+    }
+
+    index.write().context("Failed to write index")?;
+    Ok(())
+}
+
+pub fn stage_all(repo: &Repository) -> Result<usize> {
+    let status = get_status(repo)?;
+    let paths: Vec<String> = status.unstaged_files.into_iter().map(|f| f.path).collect();
+    let count = paths.len();
+    if count > 0 {
+        stage_files(repo, &paths)?;
+    }
+    Ok(count)
+}
+
+pub fn unstage_all(repo: &Repository) -> Result<usize> {
+    let status = get_status(repo)?;
+    let paths: Vec<String> = status.staged_files.into_iter().map(|f| f.path).collect();
+    let count = paths.len();
+    if count > 0 {
+        unstage_files(repo, &paths)?;
+    }
+    Ok(count)
+}
+
 pub fn get_untracked_diff(repo: &Repository, path: &str) -> DiffContent {
     let workdir = match repo.workdir() {
         Some(w) => w,

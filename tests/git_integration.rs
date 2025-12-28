@@ -273,6 +273,138 @@ mod diff_tests {
     }
 }
 
+mod stage_unstage_tests {
+    use super::*;
+    use better_git_status::git::{get_status, stage_all, stage_files, unstage_all, unstage_files};
+    use better_git_status::types::FileStatus;
+
+    #[test]
+    fn stage_files_adds_to_index() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert!(status.staged_files.is_empty());
+
+        stage_files(&test_repo.repo, &["file.txt".to_string()]).unwrap();
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+        assert_eq!(status.staged_files.len(), 1);
+        assert_eq!(status.staged_files[0].status, FileStatus::Added);
+    }
+
+    #[test]
+    fn stage_files_handles_deleted_file() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        fs::remove_file(test_repo.path().join("file.txt")).unwrap();
+
+        stage_files(&test_repo.repo, &["file.txt".to_string()]).unwrap();
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+        assert_eq!(status.staged_files.len(), 1);
+        assert_eq!(status.staged_files[0].status, FileStatus::Deleted);
+    }
+
+    #[test]
+    fn unstage_files_removes_from_index() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.staged_files.len(), 1);
+
+        unstage_files(&test_repo.repo, &["file.txt".to_string()]).unwrap();
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.staged_files.is_empty());
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].status, FileStatus::Untracked);
+    }
+
+    #[test]
+    fn unstage_files_resets_modified() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file.txt", "modified\n");
+        test_repo.stage("file.txt");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.staged_files.len(), 1);
+        assert!(status.unstaged_files.is_empty());
+
+        unstage_files(&test_repo.repo, &["file.txt".to_string()]).unwrap();
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.staged_files.is_empty());
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].status, FileStatus::Modified);
+    }
+
+    #[test]
+    fn stage_all_stages_all_unstaged() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 2);
+
+        let count = stage_all(&test_repo.repo).unwrap();
+        assert_eq!(count, 2);
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+        assert_eq!(status.staged_files.len(), 2);
+    }
+
+    #[test]
+    fn unstage_all_unstages_all_staged() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.staged_files.len(), 2);
+
+        let count = unstage_all(&test_repo.repo).unwrap();
+        assert_eq!(count, 2);
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.staged_files.is_empty());
+        assert_eq!(status.unstaged_files.len(), 2);
+    }
+
+    #[test]
+    fn stage_multiple_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.write_file("file3.txt", "content3\n");
+
+        stage_files(
+            &test_repo.repo,
+            &["file1.txt".to_string(), "file3.txt".to_string()],
+        )
+        .unwrap();
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.staged_files.len(), 2);
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].path, "file2.txt");
+    }
+}
+
 mod branch_tests {
     use super::*;
     use better_git_status::git::get_branch_info;
@@ -314,5 +446,178 @@ mod branch_tests {
             }
             _ => panic!("Expected Detached"),
         }
+    }
+}
+
+mod app_stage_unstage_tests {
+    use super::*;
+    use better_git_status::app::App;
+    use better_git_status::git::get_status;
+    use better_git_status::types::{FileStatus, Section};
+
+    #[test]
+    fn app_stage_selected_single_file() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.unstaged_count, 1);
+        assert_eq!(app.staged_count, 0);
+
+        app.stage_selected().unwrap();
+
+        assert_eq!(app.unstaged_count, 0);
+        assert_eq!(app.staged_count, 1);
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+        assert_eq!(status.staged_files.len(), 1);
+        assert_eq!(status.staged_files[0].status, FileStatus::Added);
+    }
+
+    #[test]
+    fn app_unstage_selected_single_file() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.staged_count, 1);
+        assert_eq!(app.unstaged_count, 0);
+
+        app.unstage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 1);
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.staged_files.is_empty());
+        assert_eq!(status.unstaged_files.len(), 1);
+    }
+
+    #[test]
+    fn app_stage_multi_selected_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.unstaged_count, 2);
+
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+
+        assert_eq!(app.multi_selected.len(), 2);
+
+        app.stage_selected().unwrap();
+
+        assert_eq!(app.unstaged_count, 0);
+        assert_eq!(app.staged_count, 2);
+        assert!(app.multi_selected.is_empty());
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.staged_files.len(), 2);
+    }
+
+    #[test]
+    fn app_unstage_multi_selected_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.staged_count, 2);
+
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+
+        assert_eq!(app.multi_selected.len(), 2);
+
+        app.unstage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn app_stage_ignores_already_staged_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("staged.txt", "staged\n");
+        test_repo.stage("staged.txt");
+        test_repo.write_file("unstaged.txt", "unstaged\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.staged_count, 1);
+        assert_eq!(app.unstaged_count, 1);
+
+        app.multi_selected
+            .insert((Section::Staged, "staged.txt".to_string()));
+        app.multi_selected
+            .insert((Section::Unstaged, "unstaged.txt".to_string()));
+
+        app.stage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 2);
+        assert_eq!(app.unstaged_count, 0);
+    }
+
+    #[test]
+    fn app_unstage_ignores_already_unstaged_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("staged.txt", "staged\n");
+        test_repo.stage("staged.txt");
+        test_repo.write_file("unstaged.txt", "unstaged\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.multi_selected
+            .insert((Section::Staged, "staged.txt".to_string()));
+        app.multi_selected
+            .insert((Section::Unstaged, "unstaged.txt".to_string()));
+
+        app.unstage_selected().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+    }
+
+    #[test]
+    fn app_stage_clears_multi_select() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        app.toggle_multi_select();
+
+        assert!(!app.multi_selected.is_empty());
+
+        app.stage_selected().unwrap();
+
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn app_stage_sets_status_message() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert!(app.status_message.is_none());
+
+        app.stage_selected().unwrap();
+
+        assert!(app.status_message.is_some());
+        assert!(app.status_message.as_ref().unwrap().contains("Staged"));
     }
 }

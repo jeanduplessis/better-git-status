@@ -1,5 +1,8 @@
 use crate::git;
-use crate::types::{BranchInfo, DiffContent, FileEntry, MultiSelectSet, Section, VisibleRow};
+use crate::types::{
+    BranchInfo, ConfirmAction, ConfirmPrompt, DiffContent, FileEntry, MultiSelectSet, Section,
+    VisibleRow,
+};
 use crate::ui;
 use crate::watcher::{FileWatcher, WatcherEvent};
 use anyhow::Result;
@@ -21,29 +24,32 @@ use std::time::{Duration, Instant};
 pub struct App {
     repo: Repository,
 
-    pub(crate) staged_files: Vec<FileEntry>,
-    pub(crate) unstaged_files: Vec<FileEntry>,
+    pub staged_files: Vec<FileEntry>,
+    pub unstaged_files: Vec<FileEntry>,
 
-    pub(crate) highlight_index: Option<usize>,
-    pub(crate) selected: Option<(Section, String)>,
-    pub(crate) multi_selected: MultiSelectSet,
-    pub(crate) file_list_scroll: usize,
+    pub highlight_index: Option<usize>,
+    pub selected: Option<(Section, String)>,
+    pub multi_selected: MultiSelectSet,
+    pub file_list_scroll: usize,
 
-    pub(crate) current_diff: DiffContent,
-    pub(crate) diff_scroll: usize,
+    pub current_diff: DiffContent,
+    pub diff_scroll: usize,
 
-    pub(crate) staged_count: usize,
-    pub(crate) unstaged_count: usize,
-    pub(crate) untracked_count: usize,
+    pub staged_count: usize,
+    pub unstaged_count: usize,
+    pub untracked_count: usize,
 
-    pub(crate) branch: BranchInfo,
+    pub branch: BranchInfo,
 
     visible_rows: Vec<VisibleRow>,
 
-    pub(crate) file_list_height: usize,
+    pub file_list_height: usize,
 
-    pub(crate) file_list_area: Rect,
-    pub(crate) diff_area: Rect,
+    pub file_list_area: Rect,
+    pub diff_area: Rect,
+
+    pub confirm_prompt: Option<ConfirmPrompt>,
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -87,6 +93,8 @@ impl App {
             file_list_height: 0,
             file_list_area: Rect::default(),
             diff_area: Rect::default(),
+            confirm_prompt: None,
+            status_message: None,
         })
     }
 
@@ -173,7 +181,7 @@ impl App {
         }
     }
 
-    fn toggle_multi_select(&mut self) {
+    pub fn toggle_multi_select(&mut self) {
         if let Some(idx) = self.highlight_index {
             if let Some(row) = self.visible_rows.get(idx) {
                 let key = (row.section, row.path.clone());
@@ -186,7 +194,7 @@ impl App {
         }
     }
 
-    fn clear_multi_select(&mut self) {
+    pub fn clear_multi_select(&mut self) {
         self.multi_selected.clear();
     }
 
@@ -198,7 +206,6 @@ impl App {
         });
     }
 
-    #[allow(dead_code)]
     pub fn get_action_targets(&self) -> Vec<(Section, String)> {
         if self.multi_selected.is_empty() {
             if let Some(idx) = self.highlight_index {
@@ -212,7 +219,95 @@ impl App {
         }
     }
 
-    fn move_highlight(&mut self, delta: isize) {
+    pub fn stage_selected(&mut self) -> Result<()> {
+        let targets = self.get_action_targets();
+        let paths: Vec<String> = targets
+            .into_iter()
+            .filter(|(section, _)| *section == Section::Unstaged)
+            .map(|(_, path)| path)
+            .collect();
+
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let count = paths.len();
+        git::stage_files(&self.repo, &paths)?;
+        self.clear_multi_select();
+        self.refresh()?;
+        self.status_message = Some(format!("Staged {} file{}", count, if count == 1 { "" } else { "s" }));
+        Ok(())
+    }
+
+    pub fn unstage_selected(&mut self) -> Result<()> {
+        let targets = self.get_action_targets();
+        let paths: Vec<String> = targets
+            .into_iter()
+            .filter(|(section, _)| *section == Section::Staged)
+            .map(|(_, path)| path)
+            .collect();
+
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let count = paths.len();
+        git::unstage_files(&self.repo, &paths)?;
+        self.clear_multi_select();
+        self.refresh()?;
+        self.status_message = Some(format!("Unstaged {} file{}", count, if count == 1 { "" } else { "s" }));
+        Ok(())
+    }
+
+    fn show_stage_all_confirm(&mut self) {
+        let count = self.unstaged_files.len();
+        if count == 0 {
+            return;
+        }
+        self.confirm_prompt = Some(ConfirmPrompt {
+            message: format!("Stage {} file{}? [y/N]", count, if count == 1 { "" } else { "s" }),
+            action: ConfirmAction::StageAll,
+        });
+    }
+
+    fn show_unstage_all_confirm(&mut self) {
+        let count = self.staged_files.len();
+        if count == 0 {
+            return;
+        }
+        self.confirm_prompt = Some(ConfirmPrompt {
+            message: format!("Unstage {} file{}? [y/N]", count, if count == 1 { "" } else { "s" }),
+            action: ConfirmAction::UnstageAll,
+        });
+    }
+
+    fn handle_confirm(&mut self, confirmed: bool) -> Result<()> {
+        if let Some(prompt) = self.confirm_prompt.take() {
+            if confirmed {
+                match prompt.action {
+                    ConfirmAction::StageAll => {
+                        let count = git::stage_all(&self.repo)?;
+                        self.clear_multi_select();
+                        self.refresh()?;
+                        if count > 0 {
+                            self.status_message = Some(format!("Staged {} file{}", count, if count == 1 { "" } else { "s" }));
+                        }
+                    }
+                    ConfirmAction::UnstageAll => {
+                        let count = git::unstage_all(&self.repo)?;
+                        self.clear_multi_select();
+                        self.refresh()?;
+                        if count > 0 {
+                            self.status_message = Some(format!("Unstaged {} file{}", count, if count == 1 { "" } else { "s" }));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn move_highlight(&mut self, delta: isize) {
         if self.visible_rows.is_empty() {
             return;
         }
@@ -364,32 +459,50 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
             match event::read()? {
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Char('q') => break,
-                            KeyCode::Esc => {
-                                if app.multi_selected.is_empty() {
-                                    break;
-                                } else {
-                                    app.clear_multi_select();
+                        if app.confirm_prompt.is_some() {
+                            let confirmed = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
+                            app.handle_confirm(confirmed)?;
+                        } else {
+                            app.status_message = None;
+                            match key.code {
+                                KeyCode::Char('q') => break,
+                                KeyCode::Esc => {
+                                    if app.multi_selected.is_empty() {
+                                        break;
+                                    } else {
+                                        app.clear_multi_select();
+                                    }
                                 }
+                                KeyCode::Down => app.move_highlight(1),
+                                KeyCode::Up => app.move_highlight(-1),
+                                KeyCode::Char(' ') => app.toggle_multi_select(),
+                                KeyCode::Enter => app.select_current(),
+                                KeyCode::Char('s') => {
+                                    if let Err(e) = app.stage_selected() {
+                                        app.status_message = Some(format!("Error: {}", e));
+                                    }
+                                }
+                                KeyCode::Char('u') => {
+                                    if let Err(e) = app.unstage_selected() {
+                                        app.status_message = Some(format!("Error: {}", e));
+                                    }
+                                }
+                                KeyCode::Char('S') => app.show_stage_all_confirm(),
+                                KeyCode::Char('U') => app.show_unstage_all_confirm(),
+                                KeyCode::PageDown => {
+                                    let size = terminal.size()?;
+                                    let height = size.height.saturating_sub(10) as usize;
+                                    let width = size.width.saturating_sub(2) as usize;
+                                    app.page_scroll_diff(true, height, width);
+                                }
+                                KeyCode::PageUp => {
+                                    let size = terminal.size()?;
+                                    let height = size.height.saturating_sub(10) as usize;
+                                    let width = size.width.saturating_sub(2) as usize;
+                                    app.page_scroll_diff(false, height, width);
+                                }
+                                _ => {}
                             }
-                            KeyCode::Down => app.move_highlight(1),
-                            KeyCode::Up => app.move_highlight(-1),
-                            KeyCode::Char(' ') => app.toggle_multi_select(),
-                            KeyCode::Enter => app.select_current(),
-                            KeyCode::PageDown => {
-                                let size = terminal.size()?;
-                                let height = size.height.saturating_sub(10) as usize;
-                                let width = size.width.saturating_sub(2) as usize;
-                                app.page_scroll_diff(true, height, width);
-                            }
-                            KeyCode::PageUp => {
-                                let size = terminal.size()?;
-                                let height = size.height.saturating_sub(10) as usize;
-                                let width = size.width.saturating_sub(2) as usize;
-                                app.page_scroll_diff(false, height, width);
-                            }
-                            _ => {}
                         }
                     }
                 }
