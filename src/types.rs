@@ -3,6 +3,8 @@
 pub struct FileEntry {
     /// The path of the file relative to the repository root.
     pub path: String,
+    /// The original path for renamed files (None if not a rename).
+    pub old_path: Option<String>,
     /// The type of change (added, modified, deleted, etc.).
     pub status: FileStatus,
     /// Number of lines added (None if not computable).

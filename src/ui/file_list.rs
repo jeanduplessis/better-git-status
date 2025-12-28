@@ -98,11 +98,17 @@ fn create_file_item(
 
     let counts = format_line_counts(file.added_lines, file.deleted_lines, file.is_binary);
 
+    let display_path = if let Some(ref old) = file.old_path {
+        format!("{} → {}", old, file.path)
+    } else {
+        file.path.clone()
+    };
+
     let fixed_width = prefix.len() + 2 + counts.len() + 2;
     let available_width = (width as usize).saturating_sub(fixed_width);
 
     let (path_display, show_counts) =
-        format_path_with_priority(&file.path, &counts, available_width);
+        format_path_with_priority(&display_path, &counts, available_width);
 
     let base_style = if is_highlighted {
         Style::default().add_modifier(Modifier::BOLD)
