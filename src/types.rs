@@ -129,6 +129,8 @@ pub struct VisibleRow {
 pub enum ConfirmAction {
     StageAll,
     UnstageAll,
+    DiscardSelected { paths: Vec<(Section, String)> },
+    DiscardAll,
 }
 
 /// Undo action for reverting stage/unstage operations.

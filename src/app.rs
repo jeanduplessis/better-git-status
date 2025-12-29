@@ -300,6 +300,143 @@ impl App {
         Ok(())
     }
 
+    pub fn show_discard_selected_confirm(&mut self) {
+        let targets = self.get_action_targets();
+        if targets.is_empty() {
+            return;
+        }
+
+        let unstaged_targets: Vec<(Section, String)> = targets
+            .into_iter()
+            .filter(|(section, _)| *section == Section::Unstaged)
+            .collect();
+
+        if unstaged_targets.is_empty() {
+            return;
+        }
+
+        let has_conflict = unstaged_targets.iter().any(|(_, path)| {
+            self.unstaged_files
+                .iter()
+                .any(|f| &f.path == path && f.status == crate::types::FileStatus::Conflict)
+        });
+
+        if has_conflict {
+            self.show_flash_error("Cannot discard conflicted files. Resolve conflicts first.");
+            return;
+        }
+
+        let has_untracked = unstaged_targets.iter().any(|(_, path)| {
+            self.unstaged_files
+                .iter()
+                .any(|f| &f.path == path && f.status == crate::types::FileStatus::Untracked)
+        });
+
+        let count = unstaged_targets.len();
+        let message = if count == 1 {
+            if has_untracked {
+                "Delete untracked file? [y/N]".to_string()
+            } else {
+                "Discard changes? [y/N]".to_string()
+            }
+        } else if has_untracked {
+            format!(
+                "Discard {} changes (including untracked files)? [y/N]",
+                count
+            )
+        } else {
+            format!("Discard {} changes? [y/N]", count)
+        };
+
+        self.confirm_prompt = Some(ConfirmPrompt {
+            message,
+            action: ConfirmAction::DiscardSelected {
+                paths: unstaged_targets,
+            },
+        });
+    }
+
+    pub fn show_discard_all_confirm(&mut self) {
+        let count = self.unstaged_files.len();
+        if count == 0 {
+            return;
+        }
+
+        let has_untracked = self
+            .unstaged_files
+            .iter()
+            .any(|f| f.status == crate::types::FileStatus::Untracked);
+
+        let message = if has_untracked {
+            format!(
+                "Discard all changes and delete untracked files ({} files)? [y/N]",
+                count
+            )
+        } else {
+            format!("Discard all changes ({} files)? [y/N]", count)
+        };
+
+        self.confirm_prompt = Some(ConfirmPrompt {
+            message,
+            action: ConfirmAction::DiscardAll,
+        });
+    }
+
+    fn discard_files(&mut self, paths: &[(Section, String)]) -> Result<()> {
+        let mut count = 0;
+        for (section, path) in paths {
+            if *section != Section::Unstaged {
+                continue;
+            }
+
+            let is_untracked = self
+                .unstaged_files
+                .iter()
+                .any(|f| &f.path == path && f.status == crate::types::FileStatus::Untracked);
+
+            if is_untracked {
+                git::discard_untracked_file(&self.repo, path)?;
+            } else {
+                git::discard_unstaged_file(&self.repo, path)?;
+            }
+            count += 1;
+        }
+
+        self.last_action = None;
+        self.clear_multi_select();
+        self.refresh()?;
+        if count > 0 {
+            self.show_flash_success(format!("Discarded {} file{}", count, plural_s(count)));
+        }
+        Ok(())
+    }
+
+    fn discard_all(&mut self) -> Result<()> {
+        let (paths, skipped_conflicts) = git::discard_all_unstaged(&self.repo)?;
+        let count = paths.len();
+        self.last_action = None;
+        self.clear_multi_select();
+        self.refresh()?;
+        if count > 0 && skipped_conflicts > 0 {
+            self.show_flash_success(format!(
+                "Discarded {} file{} ({} conflict{} skipped)",
+                count,
+                plural_s(count),
+                skipped_conflicts,
+                plural_s(skipped_conflicts)
+            ));
+        } else if count > 0 {
+            self.show_flash_success(format!("Discarded {} file{}", count, plural_s(count)));
+        } else if skipped_conflicts > 0 {
+            self.show_flash_error(format!(
+                "No files discarded ({} conflict{} skipped)",
+                skipped_conflicts,
+                plural_s(skipped_conflicts)
+            ));
+        }
+        Ok(())
+    }
+
     pub fn show_stage_all_confirm(&mut self) {
         let count = self.unstaged_files.len();
         if count == 0 {
@@ -369,6 +506,12 @@ impl App {
                         if count > 0 {
                             self.show_flash_success(format!("Unstaged {} file{}", count, plural_s(count)));
                         }
+                    }
+                    ConfirmAction::DiscardSelected { paths } => {
+                        self.discard_files(&paths)?;
+                    }
+                    ConfirmAction::DiscardAll => {
+                        self.discard_all()?;
                     }
                 }
             }
@@ -562,6 +705,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                                 }
                                 KeyCode::Char('S') => app.show_stage_all_confirm(),
                                 KeyCode::Char('U') => app.show_unstage_all_confirm(),
+                                KeyCode::Char('d') => app.show_discard_selected_confirm(),
+                                KeyCode::Char('D') => app.show_discard_all_confirm(),
                                 KeyCode::PageDown => {
                                     let size = terminal.size()?;
                                     let height = size.height.saturating_sub(10) as usize;

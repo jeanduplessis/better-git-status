@@ -549,6 +549,71 @@ pub fn unstage_all(repo: &Repository) -> Result<Vec<String>> {
     Ok(paths)
 }
 
+/// Discard unstaged changes to a tracked file by restoring it from the index.
+///
+/// This is equivalent to `git checkout -- <file>`.
+pub fn discard_unstaged_file(repo: &Repository, path: &str) -> Result<()> {
+    repo.checkout_index(
+        Some(&mut repo.index()?),
+        Some(
+            git2::build::CheckoutBuilder::new()
+                .force()
+                .path(path),
+        ),
+    )
+    .with_context(|| format!("Failed to discard changes: {}", path))?;
+    Ok(())
+}
+
+/// Delete an untracked file from the working directory.
+///
+/// This is equivalent to `git clean -f <file>`.
+pub fn discard_untracked_file(repo: &Repository, path: &str) -> Result<()> {
+    let workdir = repo.workdir().context("Repository has no working directory")?;
+    let full_path = workdir.join(path);
+    std::fs::remove_file(&full_path)
+        .with_context(|| format!("Failed to delete untracked file: {}", path))?;
+    Ok(())
+}
+
+/// Discard a staged file by resetting it from HEAD.
+///
+/// This removes the file from the index if it was newly added,
+/// or restores it to the HEAD version if it was modified/deleted.
+/// This is equivalent to `git reset HEAD <file>`.
+///
+/// Note: Currently unused but kept for potential future use cases.
+#[allow(dead_code)]
+pub fn discard_staged_file(repo: &Repository, path: &str) -> Result<()> {
+    unstage_files(repo, &[path.to_string()])?;
+    Ok(())
+}
+
+/// Discard all unstaged changes including untracked files.
+///
+/// This restores all modified files from the index and deletes all untracked files.
+/// Conflicted files are skipped (they must be resolved separately).
+pub fn discard_all_unstaged(repo: &Repository) -> Result<(Vec<String>, usize)> {
+    let status = get_status(repo)?;
+    let mut discarded = Vec::new();
+    let mut skipped_conflicts = 0;
+
+    for file in &status.unstaged_files {
+        if file.status == FileStatus::Conflict {
+            skipped_conflicts += 1;
+            continue;
+        }
+        if file.status == FileStatus::Untracked {
+            discard_untracked_file(repo, &file.path)?;
+        } else {
+            discard_unstaged_file(repo, &file.path)?;
+        }
+        discarded.push(file.path.clone());
+    }
+
+    Ok((discarded, skipped_conflicts))
+}
+
 pub fn get_untracked_diff(repo: &Repository, path: &str) -> DiffContent {
     let workdir = match repo.workdir() {
         Some(w) => w,

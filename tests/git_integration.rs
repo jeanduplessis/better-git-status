@@ -896,3 +896,365 @@ mod confirm_prompt_tests {
         assert!(!prompt.message.contains("files"));
     }
 }
+
+mod discard_tests {
+    use super::*;
+    use better_git_status::app::App;
+    use better_git_status::git::{discard_all_unstaged, discard_unstaged_file, discard_untracked_file, get_status};
+    use better_git_status::types::FileStatus;
+    use std::fs;
+
+    #[test]
+    fn discard_unstaged_file_restores_from_index() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file.txt", "modified\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].status, FileStatus::Modified);
+
+        discard_unstaged_file(&test_repo.repo, "file.txt").unwrap();
+
+        let content = fs::read_to_string(test_repo.path().join("file.txt")).unwrap();
+        assert_eq!(content, "original\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn discard_untracked_file_deletes_file() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("untracked.txt", "content\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].status, FileStatus::Untracked);
+
+        discard_untracked_file(&test_repo.repo, "untracked.txt").unwrap();
+
+        assert!(!test_repo.path().join("untracked.txt").exists());
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn discard_deleted_file_restores_from_index() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original content\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+
+        fs::remove_file(test_repo.path().join("file.txt")).unwrap();
+        assert!(!test_repo.path().join("file.txt").exists());
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 1);
+        assert_eq!(status.unstaged_files[0].status, FileStatus::Deleted);
+
+        discard_unstaged_file(&test_repo.repo, "file.txt").unwrap();
+
+        assert!(test_repo.path().join("file.txt").exists());
+        let content = fs::read_to_string(test_repo.path().join("file.txt")).unwrap();
+        assert_eq!(content, "original content\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn discard_all_unstaged_discards_all() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "original\n");
+        test_repo.stage("file1.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file1.txt", "modified\n");
+        test_repo.write_file("untracked.txt", "new content\n");
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert_eq!(status.unstaged_files.len(), 2);
+
+        let (discarded, skipped) = discard_all_unstaged(&test_repo.repo).unwrap();
+        assert_eq!(discarded.len(), 2);
+        assert_eq!(skipped, 0);
+
+        let content = fs::read_to_string(test_repo.path().join("file1.txt")).unwrap();
+        assert_eq!(content, "original\n");
+        assert!(!test_repo.path().join("untracked.txt").exists());
+
+        let status = get_status(&test_repo.repo).unwrap();
+        assert!(status.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn show_discard_selected_confirm_shows_correct_message_for_modified() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file.txt", "modified\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        app.show_discard_selected_confirm();
+
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("Discard changes?"));
+        assert!(prompt.message.contains("[y/N]"));
+    }
+
+    #[test]
+    fn show_discard_selected_confirm_shows_correct_message_for_untracked() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("untracked.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        app.show_discard_selected_confirm();
+
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("Delete untracked file?"));
+        assert!(prompt.message.contains("[y/N]"));
+    }
+
+    #[test]
+    fn show_discard_all_confirm_shows_count_and_warning() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "original\n");
+        test_repo.stage("file1.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file1.txt", "modified\n");
+        test_repo.write_file("untracked.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        app.show_discard_all_confirm();
+
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("2 files"));
+        assert!(prompt.message.contains("delete untracked"));
+        assert!(prompt.message.contains("[y/N]"));
+    }
+
+    #[test]
+    fn confirm_discard_selected_discards_file() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file.txt", "modified\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.unstaged_files.len(), 1);
+
+        app.show_discard_selected_confirm();
+        app.handle_confirm(true).unwrap();
+
+        let content = fs::read_to_string(test_repo.path().join("file.txt")).unwrap();
+        assert_eq!(content, "original\n");
+        assert!(app.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn confirm_discard_all_discards_all_files() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "original\n");
+        test_repo.stage("file1.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file1.txt", "modified\n");
+        test_repo.write_file("untracked.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.unstaged_files.len(), 2);
+
+        app.show_discard_all_confirm();
+        app.handle_confirm(true).unwrap();
+
+        let content = fs::read_to_string(test_repo.path().join("file1.txt")).unwrap();
+        assert_eq!(content, "original\n");
+        assert!(!test_repo.path().join("untracked.txt").exists());
+        assert!(app.unstaged_files.is_empty());
+    }
+
+    #[test]
+    fn discard_is_not_undoable() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "original\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file.txt", "modified\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.unstaged_files.len(), 1);
+
+        app.show_discard_selected_confirm();
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.last_action.is_none());
+    }
+
+    #[test]
+    fn discard_clears_previous_undo_action() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "original1\n");
+        test_repo.write_file("file2.txt", "original2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file1.txt", "modified1\n");
+        test_repo.write_file("file2.txt", "modified2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.unstaged_files.len(), 2);
+
+        app.stage_selected().unwrap();
+        assert!(app.last_action.is_some());
+        assert_eq!(app.staged_files.len(), 1);
+        assert_eq!(app.unstaged_files.len(), 1);
+
+        app.move_highlight(1);
+
+        app.show_discard_selected_confirm();
+        assert!(app.confirm_prompt.is_some());
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.last_action.is_none());
+        assert!(app.unstaged_files.is_empty());
+        assert_eq!(app.staged_files.len(), 1);
+
+        app.undo().unwrap();
+        assert_eq!(app.staged_files.len(), 1);
+    }
+
+    #[test]
+    fn multi_select_discard_applies_to_all_selected() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "original1\n");
+        test_repo.write_file("file2.txt", "original2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+        test_repo.commit("initial");
+        test_repo.write_file("file1.txt", "modified1\n");
+        test_repo.write_file("file2.txt", "modified2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.unstaged_files.len(), 2);
+
+        app.toggle_multi_select();
+        app.move_highlight(1);
+        app.toggle_multi_select();
+        assert_eq!(app.multi_selected.len(), 2);
+
+        app.show_discard_selected_confirm();
+        app.handle_confirm(true).unwrap();
+
+        let content1 = fs::read_to_string(test_repo.path().join("file1.txt")).unwrap();
+        let content2 = fs::read_to_string(test_repo.path().join("file2.txt")).unwrap();
+        assert_eq!(content1, "original1\n");
+        assert_eq!(content2, "original2\n");
+        assert!(app.unstaged_files.is_empty());
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn discard_staged_file_is_no_op() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+        assert_eq!(app.staged_files.len(), 1);
+        assert!(app.unstaged_files.is_empty());
+
+        app.show_discard_selected_confirm();
+        assert!(app.confirm_prompt.is_none());
+    }
+
+    #[test]
+    fn discard_conflicted_file_shows_error() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "base content\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("base");
+
+        let base_oid = test_repo.repo.head().unwrap().target().unwrap();
+
+        test_repo
+            .repo
+            .branch("branch1", &test_repo.repo.find_commit(base_oid).unwrap(), false)
+            .unwrap();
+
+        test_repo.write_file("file.txt", "branch1 content\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("branch1 commit");
+
+        test_repo
+            .repo
+            .set_head(&format!(
+                "refs/heads/{}",
+                test_repo.repo.head().unwrap().shorthand().unwrap()
+            ))
+            .unwrap();
+        test_repo.repo.checkout_head(None).unwrap();
+
+        test_repo
+            .repo
+            .set_head("refs/heads/branch1")
+            .unwrap();
+        test_repo.repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::new().force(),
+        )).unwrap();
+
+        test_repo
+            .repo
+            .branch("branch2", &test_repo.repo.find_commit(base_oid).unwrap(), false)
+            .unwrap();
+        test_repo
+            .repo
+            .set_head("refs/heads/branch2")
+            .unwrap();
+        test_repo.repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::new().force(),
+        )).unwrap();
+
+        test_repo.write_file("file.txt", "branch2 content\n");
+        test_repo.stage("file.txt");
+        test_repo.commit("branch2 commit");
+
+        let branch1_commit = test_repo
+            .repo
+            .find_branch("branch1", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap();
+
+        let annotated = test_repo
+            .repo
+            .find_annotated_commit(branch1_commit.id())
+            .unwrap();
+        let _ = test_repo.repo.merge(&[&annotated], None, None);
+
+        let status = get_status(&test_repo.repo).unwrap();
+        let has_conflict = status
+            .unstaged_files
+            .iter()
+            .any(|f| f.status == FileStatus::Conflict);
+
+        if has_conflict {
+            let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+            app.show_discard_selected_confirm();
+
+            assert!(app.confirm_prompt.is_none());
+            assert!(app.flash_message.is_some());
+            assert!(app.flash_message.as_ref().unwrap().is_error);
+            assert!(app
+                .flash_message
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("conflict"));
+        }
+    }
+}
