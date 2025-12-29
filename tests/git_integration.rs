@@ -688,3 +688,205 @@ mod app_stage_unstage_tests {
         assert!(app.last_action.is_none());
     }
 }
+
+mod confirm_prompt_tests {
+    use super::*;
+    use better_git_status::app::App;
+    use better_git_status::types::ConfirmAction;
+
+    #[test]
+    fn show_stage_all_confirm_sets_prompt() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert!(app.confirm_prompt.is_none());
+
+        app.show_stage_all_confirm();
+
+        assert!(app.confirm_prompt.is_some());
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("2 files"));
+        assert!(prompt.message.contains("[y/N]"));
+        assert_eq!(prompt.action, ConfirmAction::StageAll);
+    }
+
+    #[test]
+    fn show_unstage_all_confirm_sets_prompt() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert!(app.confirm_prompt.is_none());
+
+        app.show_unstage_all_confirm();
+
+        assert!(app.confirm_prompt.is_some());
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("2 files"));
+        assert!(prompt.message.contains("[y/N]"));
+        assert_eq!(prompt.action, ConfirmAction::UnstageAll);
+    }
+
+    #[test]
+    fn stage_all_confirm_with_no_files_does_nothing() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+        test_repo.stage("file.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.unstaged_count, 0);
+        app.show_stage_all_confirm();
+
+        assert!(app.confirm_prompt.is_none());
+    }
+
+    #[test]
+    fn unstage_all_confirm_with_no_files_does_nothing() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        app.show_unstage_all_confirm();
+
+        assert!(app.confirm_prompt.is_none());
+    }
+
+    #[test]
+    fn confirm_prompt_y_executes_stage_all() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_stage_all_confirm();
+        assert!(app.confirm_prompt.is_some());
+
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.confirm_prompt.is_none());
+        assert_eq!(app.staged_count, 2);
+        assert_eq!(app.unstaged_count, 0);
+        assert!(app.status_message.as_ref().unwrap().contains("Staged"));
+    }
+
+    #[test]
+    fn confirm_prompt_y_executes_unstage_all() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_unstage_all_confirm();
+        assert!(app.confirm_prompt.is_some());
+
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.confirm_prompt.is_none());
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+        assert!(app.status_message.as_ref().unwrap().contains("Unstaged"));
+    }
+
+    #[test]
+    fn confirm_prompt_dismiss_does_not_execute() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_stage_all_confirm();
+        assert!(app.confirm_prompt.is_some());
+
+        app.handle_confirm(false).unwrap();
+
+        assert!(app.confirm_prompt.is_none());
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+    }
+
+    #[test]
+    fn confirm_stage_all_records_undo_action() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_stage_all_confirm();
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.last_action.is_some());
+
+        app.undo().unwrap();
+
+        assert_eq!(app.staged_count, 0);
+        assert_eq!(app.unstaged_count, 2);
+    }
+
+    #[test]
+    fn confirm_unstage_all_records_undo_action() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+        test_repo.stage("file1.txt");
+        test_repo.stage("file2.txt");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_unstage_all_confirm();
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.last_action.is_some());
+
+        app.undo().unwrap();
+
+        assert_eq!(app.staged_count, 2);
+        assert_eq!(app.unstaged_count, 0);
+    }
+
+    #[test]
+    fn confirm_stage_all_clears_multi_select() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file1.txt", "content1\n");
+        test_repo.write_file("file2.txt", "content2\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.toggle_multi_select();
+        assert!(!app.multi_selected.is_empty());
+
+        app.show_stage_all_confirm();
+        app.handle_confirm(true).unwrap();
+
+        assert!(app.multi_selected.is_empty());
+    }
+
+    #[test]
+    fn singular_file_prompt_message() {
+        let test_repo = TestRepo::new();
+        test_repo.write_file("file.txt", "content\n");
+
+        let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
+
+        app.show_stage_all_confirm();
+
+        let prompt = app.confirm_prompt.as_ref().unwrap();
+        assert!(prompt.message.contains("1 file?"));
+        assert!(!prompt.message.contains("files"));
+    }
+}

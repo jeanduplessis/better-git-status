@@ -298,7 +298,7 @@ impl App {
         Ok(())
     }
 
-    fn show_stage_all_confirm(&mut self) {
+    pub fn show_stage_all_confirm(&mut self) {
         let count = self.unstaged_files.len();
         if count == 0 {
             return;
@@ -309,7 +309,7 @@ impl App {
         });
     }
 
-    fn show_unstage_all_confirm(&mut self) {
+    pub fn show_unstage_all_confirm(&mut self) {
         let count = self.staged_files.len();
         if count == 0 {
             return;
@@ -320,7 +320,7 @@ impl App {
         });
     }
 
-    fn handle_confirm(&mut self, confirmed: bool) -> Result<()> {
+    pub fn handle_confirm(&mut self, confirmed: bool) -> Result<()> {
         if let Some(prompt) = self.confirm_prompt.take() {
             if confirmed {
                 match prompt.action {
