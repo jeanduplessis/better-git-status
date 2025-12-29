@@ -607,18 +607,20 @@ mod app_stage_unstage_tests {
     }
 
     #[test]
-    fn app_stage_sets_status_message() {
+    fn app_stage_sets_flash_message() {
         let test_repo = TestRepo::new();
         test_repo.write_file("file.txt", "content\n");
 
         let mut app = App::new(test_repo.path().to_str().unwrap()).unwrap();
 
-        assert!(app.status_message.is_none());
+        assert!(app.flash_message.is_none());
 
         app.stage_selected().unwrap();
 
-        assert!(app.status_message.is_some());
-        assert!(app.status_message.as_ref().unwrap().contains("Staged"));
+        assert!(app.flash_message.is_some());
+        let flash = app.flash_message.as_ref().unwrap();
+        assert!(flash.text.contains("Staged"));
+        assert!(!flash.is_error);
     }
 
     #[test]
@@ -643,7 +645,8 @@ mod app_stage_unstage_tests {
         assert_eq!(app.staged_count, 0);
         assert_eq!(app.unstaged_count, 2);
         assert!(app.last_action.is_none());
-        assert!(app.status_message.as_ref().unwrap().contains("Undid stage"));
+        let flash = app.flash_message.as_ref().unwrap();
+        assert!(flash.text.contains("Undid stage"));
     }
 
     #[test]
@@ -665,7 +668,8 @@ mod app_stage_unstage_tests {
         assert_eq!(app.staged_count, 1);
         assert_eq!(app.unstaged_count, 0);
         assert!(app.last_action.is_none());
-        assert!(app.status_message.as_ref().unwrap().contains("Undid unstage"));
+        let flash = app.flash_message.as_ref().unwrap();
+        assert!(flash.text.contains("Undid unstage"));
     }
 
     #[test]
@@ -679,12 +683,12 @@ mod app_stage_unstage_tests {
         app.undo().unwrap();
 
         assert!(app.last_action.is_none());
-        let _msg_after_first_undo = app.status_message.clone();
+        let _msg_after_first_undo = app.flash_message.clone();
 
-        app.status_message = None;
+        app.clear_flash();
         app.undo().unwrap();
 
-        assert!(app.status_message.is_none());
+        assert!(app.flash_message.is_none());
         assert!(app.last_action.is_none());
     }
 }
@@ -777,7 +781,8 @@ mod confirm_prompt_tests {
         assert!(app.confirm_prompt.is_none());
         assert_eq!(app.staged_count, 2);
         assert_eq!(app.unstaged_count, 0);
-        assert!(app.status_message.as_ref().unwrap().contains("Staged"));
+        let flash = app.flash_message.as_ref().unwrap();
+        assert!(flash.text.contains("Staged"));
     }
 
     #[test]
@@ -798,7 +803,8 @@ mod confirm_prompt_tests {
         assert!(app.confirm_prompt.is_none());
         assert_eq!(app.staged_count, 0);
         assert_eq!(app.unstaged_count, 2);
-        assert!(app.status_message.as_ref().unwrap().contains("Unstaged"));
+        let flash = app.flash_message.as_ref().unwrap();
+        assert!(flash.text.contains("Unstaged"));
     }
 
     #[test]

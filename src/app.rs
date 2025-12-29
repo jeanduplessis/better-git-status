@@ -1,7 +1,7 @@
 use crate::git;
 use crate::types::{
-    BranchInfo, ConfirmAction, ConfirmPrompt, DiffContent, FileEntry, MultiSelectSet, Section,
-    UndoAction, VisibleRow,
+    BranchInfo, ConfirmAction, ConfirmPrompt, DiffContent, FileEntry, FlashMessage, MultiSelectSet,
+    Section, UndoAction, VisibleRow,
 };
 use crate::ui;
 use crate::watcher::{FileWatcher, WatcherEvent};
@@ -20,6 +20,8 @@ use std::io;
 use std::path::Path;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
+
+const FLASH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Application state for the interactive git status TUI.
 pub struct App {
@@ -50,7 +52,7 @@ pub struct App {
     pub diff_area: Rect,
 
     pub confirm_prompt: Option<ConfirmPrompt>,
-    pub status_message: Option<String>,
+    pub flash_message: Option<FlashMessage>,
     pub last_action: Option<UndoAction>,
 }
 
@@ -96,7 +98,7 @@ impl App {
             file_list_area: Rect::default(),
             diff_area: Rect::default(),
             confirm_prompt: None,
-            status_message: None,
+            flash_message: None,
             last_action: None,
         })
     }
@@ -239,7 +241,7 @@ impl App {
         self.last_action = Some(UndoAction::Stage { paths });
         self.clear_multi_select();
         self.refresh()?;
-        self.status_message = Some(format!("Staged {} file{}", count, plural_s(count)));
+        self.show_flash_success(format!("Staged {} file{}", count, plural_s(count)));
         Ok(())
     }
 
@@ -260,7 +262,7 @@ impl App {
         self.last_action = Some(UndoAction::Unstage { paths });
         self.clear_multi_select();
         self.refresh()?;
-        self.status_message = Some(format!("Unstaged {} file{}", count, plural_s(count)));
+        self.show_flash_success(format!("Unstaged {} file{}", count, plural_s(count)));
         Ok(())
     }
 
@@ -276,7 +278,7 @@ impl App {
                 git::unstage_files(&self.repo, &paths)?;
                 self.last_action = None;
                 self.refresh()?;
-                self.status_message = Some(format!(
+                self.show_flash_success(format!(
                     "Undid stage of {} file{}",
                     count,
                     plural_s(count)
@@ -287,7 +289,7 @@ impl App {
                 git::stage_files(&self.repo, &paths)?;
                 self.last_action = None;
                 self.refresh()?;
-                self.status_message = Some(format!(
+                self.show_flash_success(format!(
                     "Undid unstage of {} file{}",
                     count,
                     plural_s(count)
@@ -320,6 +322,26 @@ impl App {
         });
     }
 
+    pub fn show_flash_success(&mut self, text: impl Into<String>) {
+        self.flash_message = Some(FlashMessage::success(text));
+    }
+
+    pub fn show_flash_error(&mut self, text: impl Into<String>) {
+        self.flash_message = Some(FlashMessage::error(text));
+    }
+
+    pub fn clear_flash(&mut self) {
+        self.flash_message = None;
+    }
+
+    pub fn check_flash_expiry(&mut self) {
+        if let Some(ref flash) = self.flash_message {
+            if flash.is_expired(FLASH_TIMEOUT) {
+                self.flash_message = None;
+            }
+        }
+    }
+
     pub fn handle_confirm(&mut self, confirmed: bool) -> Result<()> {
         if let Some(prompt) = self.confirm_prompt.take() {
             if confirmed {
@@ -333,7 +355,7 @@ impl App {
                         self.clear_multi_select();
                         self.refresh()?;
                         if count > 0 {
-                            self.status_message = Some(format!("Staged {} file{}", count, plural_s(count)));
+                            self.show_flash_success(format!("Staged {} file{}", count, plural_s(count)));
                         }
                     }
                     ConfirmAction::UnstageAll => {
@@ -345,7 +367,7 @@ impl App {
                         self.clear_multi_select();
                         self.refresh()?;
                         if count > 0 {
-                            self.status_message = Some(format!("Unstaged {} file{}", count, plural_s(count)));
+                            self.show_flash_success(format!("Unstaged {} file{}", count, plural_s(count)));
                         }
                     }
                 }
@@ -514,7 +536,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                             let confirmed = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
                             app.handle_confirm(confirmed)?;
                         } else {
-                            app.status_message = None;
+                            app.clear_flash();
                             match key.code {
                                 KeyCode::Char('q') => break,
                                 KeyCode::Esc => {
@@ -530,12 +552,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                                 KeyCode::Enter => app.select_current(),
                                 KeyCode::Char('s') => {
                                     if let Err(e) = app.stage_selected() {
-                                        app.status_message = Some(format!("Error: {}", e));
+                                        app.show_flash_error(format!("Error: {}", e));
                                     }
                                 }
                                 KeyCode::Char('u') => {
                                     if let Err(e) = app.unstage_selected() {
-                                        app.status_message = Some(format!("Error: {}", e));
+                                        app.show_flash_error(format!("Error: {}", e));
                                     }
                                 }
                                 KeyCode::Char('S') => app.show_stage_all_confirm(),
@@ -556,7 +578,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
                                     if key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
                                     if let Err(e) = app.undo() {
-                                        app.status_message = Some(format!("Error: {}", e));
+                                        app.show_flash_error(format!("Error: {}", e));
                                     }
                                 }
                                 _ => {}
@@ -630,6 +652,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &str) ->
             app.refresh()?;
             last_poll = Instant::now();
         }
+
+        app.check_flash_expiry();
     }
 
     Ok(())

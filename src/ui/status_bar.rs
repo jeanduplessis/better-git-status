@@ -1,4 +1,4 @@
-use crate::types::{BranchInfo, ConfirmPrompt};
+use crate::types::{BranchInfo, ConfirmPrompt, FlashMessage};
 use crate::ui::colors;
 use ratatui::{
     layout::Rect,
@@ -14,7 +14,7 @@ pub struct StatusBarState<'a> {
     pub unstaged_count: usize,
     pub untracked_count: usize,
     pub confirm_prompt: Option<&'a ConfirmPrompt>,
-    pub status_message: Option<&'a str>,
+    pub flash_message: Option<&'a FlashMessage>,
 }
 
 pub fn draw(frame: &mut Frame, area: Rect, state: StatusBarState<'_>) {
@@ -23,10 +23,16 @@ pub fn draw(frame: &mut Frame, area: Rect, state: StatusBarState<'_>) {
             Span::raw(" "),
             Span::styled(&prompt.message, Style::default().fg(colors::YELLOW)),
         ])
-    } else if let Some(message) = state.status_message {
+    } else if let Some(flash) = state.flash_message {
+        let (prefix, color) = if flash.is_error {
+            ("✗ ", colors::RED)
+        } else {
+            ("✓ ", colors::GREEN)
+        };
         Line::from(vec![
             Span::raw(" "),
-            Span::styled(message, Style::default().fg(colors::GREEN)),
+            Span::styled(prefix, Style::default().fg(color)),
+            Span::styled(&flash.text, Style::default().fg(color)),
         ])
     } else {
         Line::from(vec![

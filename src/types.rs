@@ -145,6 +145,36 @@ pub struct ConfirmPrompt {
     pub action: ConfirmAction,
 }
 
+/// Flash message for temporary feedback.
+#[derive(Debug, Clone)]
+pub struct FlashMessage {
+    pub text: String,
+    pub is_error: bool,
+    pub shown_at: std::time::Instant,
+}
+
+impl FlashMessage {
+    pub fn success(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: false,
+            shown_at: std::time::Instant::now(),
+        }
+    }
+
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: true,
+            shown_at: std::time::Instant::now(),
+        }
+    }
+
+    pub fn is_expired(&self, timeout: std::time::Duration) -> bool {
+        self.shown_at.elapsed() >= timeout
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +238,25 @@ mod tests {
         };
         assert_eq!(a1, a2);
         assert_ne!(a1, a3);
+    }
+
+    #[test]
+    fn flash_message_success() {
+        let flash = FlashMessage::success("Staged 3 files");
+        assert_eq!(flash.text, "Staged 3 files");
+        assert!(!flash.is_error);
+    }
+
+    #[test]
+    fn flash_message_error() {
+        let flash = FlashMessage::error("Something went wrong");
+        assert_eq!(flash.text, "Something went wrong");
+        assert!(flash.is_error);
+    }
+
+    #[test]
+    fn flash_message_not_expired_immediately() {
+        let flash = FlashMessage::success("test");
+        assert!(!flash.is_expired(std::time::Duration::from_secs(3)));
     }
 }

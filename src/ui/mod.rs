@@ -51,7 +51,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             unstaged_count: app.unstaged_count,
             untracked_count: app.untracked_count,
             confirm_prompt: app.confirm_prompt.as_ref(),
-            status_message: app.status_message.as_deref(),
+            flash_message: app.flash_message.as_ref(),
         },
     );
 
@@ -364,5 +364,99 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
         assert!(buffer_contains(&buffer, "Conflict"));
+    }
+
+    #[test]
+    fn status_bar_shows_flash_success() {
+        use crate::types::{BranchInfo, FlashMessage};
+
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let branch = BranchInfo::Branch("main".to_string());
+        let flash = FlashMessage::success("Staged 3 files");
+
+        terminal
+            .draw(|frame| {
+                status_bar::draw(
+                    frame,
+                    frame.area(),
+                    status_bar::StatusBarState {
+                        branch: &branch,
+                        staged_count: 0,
+                        unstaged_count: 0,
+                        untracked_count: 0,
+                        confirm_prompt: None,
+                        flash_message: Some(&flash),
+                    },
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "✓"));
+        assert!(buffer_contains(&buffer, "Staged 3 files"));
+    }
+
+    #[test]
+    fn status_bar_shows_flash_error() {
+        use crate::types::{BranchInfo, FlashMessage};
+
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let branch = BranchInfo::Branch("main".to_string());
+        let flash = FlashMessage::error("Something went wrong");
+
+        terminal
+            .draw(|frame| {
+                status_bar::draw(
+                    frame,
+                    frame.area(),
+                    status_bar::StatusBarState {
+                        branch: &branch,
+                        staged_count: 0,
+                        unstaged_count: 0,
+                        untracked_count: 0,
+                        confirm_prompt: None,
+                        flash_message: Some(&flash),
+                    },
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "✗"));
+        assert!(buffer_contains(&buffer, "Something went wrong"));
+    }
+
+    #[test]
+    fn status_bar_prompt_takes_priority_over_flash() {
+        use crate::types::{BranchInfo, ConfirmAction, ConfirmPrompt, FlashMessage};
+
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let branch = BranchInfo::Branch("main".to_string());
+        let flash = FlashMessage::success("This should not appear");
+        let prompt = ConfirmPrompt {
+            message: "Stage 5 files? [y/N]".to_string(),
+            action: ConfirmAction::StageAll,
+        };
+
+        terminal
+            .draw(|frame| {
+                status_bar::draw(
+                    frame,
+                    frame.area(),
+                    status_bar::StatusBarState {
+                        branch: &branch,
+                        staged_count: 0,
+                        unstaged_count: 0,
+                        untracked_count: 0,
+                        confirm_prompt: Some(&prompt),
+                        flash_message: Some(&flash),
+                    },
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Stage 5 files? [y/N]"));
+        assert!(!buffer_contains(&buffer, "This should not appear"));
     }
 }
